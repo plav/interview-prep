@@ -1,0 +1,136 @@
+#DOC Programming Fundamentals
+#SHEET Basics
+Q What's the difference between static and dynamic typing, and strong and weak typing?
+A They're two separate axes. Static versus dynamic is about when types are checked: Java, C# and TypeScript check before the code runs, so many mistakes fail at compile time; Python checks while it runs. Strong versus weak is about how much a language converts types for you: Python is dynamic but strong, so `"5" + 1` is an error, while JavaScript is weak, so `"5" + 1` silently becomes `"51"`. Static typing catches errors earlier and helps tooling, at the cost of some ceremony; type hints and TypeScript give dynamic languages some of those benefits.
+F What happens when an integer overflows? || Java and C# wrap around silently (C# can check with `checked`), Python integers grow without limit, and JavaScript numbers lose precision beyond 2⁵³; use `BigInt` or a decimal library.
+F Why do languages disagree on `-7 / 2`? || Integer division truncates towards zero in Java, C# and JavaScript, giving -3; Python's `//` rounds down, giving -4.
+F Why shouldn't you use floats for money? || Binary floating point can't represent 0.1 exactly; use integer minor units (pence) or a decimal type.
+W "Python has no types."
+S Separates when types are checked from how strictly they're enforced, gives an example of each, and names the practical trade-offs.
+#SHEET Functions
+Q What makes a good function?
+A It does one thing, has a name that says what, and is small enough to read at a glance. Ideally it's pure: the output depends only on the inputs, with no hidden side effects, so it's easy to test and reason about. It takes few parameters, using an options object when there are many, and avoids boolean flags that switch behaviour. Side effects like database writes or HTTP calls are pushed to the edges, so the core logic stays pure. And it fails clearly: validate inputs and throw or return an error, rather than returning something misleading.
+F What's a closure? || A function that remembers variables from where it was created, like `makeDiscount(0.1)` returning a function that applies 10%. Useful for configuration, callbacks and private state.
+F What's a higher-order function? || One that takes or returns a function, like `map`, `filter` or a retry wrapper.
+F Pass by value or by reference? || Java, Python, JavaScript and C# pass references to objects by value: you can mutate the object, but not reassign the caller's variable. C# adds `ref` and `out` for true references.
+W "Short and well commented."
+S Talks about one responsibility, purity and side effects at the edges, parameter design, and clear failure.
+#SHEET Classes and objects
+Q What's the difference between a class and an object?
+A A class is a blueprint: it defines the data an object holds and the methods that work on it. An object is one instance of that class, with its own state, like two `Order` objects with different items. The constructor makes sure every new object starts in a valid state, so an order can't exist without a customer. Good classes keep their data and the rules for changing it together, and expose behaviour rather than raw fields. I use classes for things with identity and behaviour, and plain data types or records for simple values that just carry data.
+F Static or instance members? || Instance members belong to each object; static members belong to the class itself, like a factory method or a constant. Static state is shared, so use it sparingly.
+F When would you use a record or data class instead? || For immutable values compared by their contents, like money or an address, rather than by identity.
+F How do classes differ across languages? || Java and C# are class-based throughout; Python classes are dynamic; TypeScript classes compile to JavaScript prototypes, and structural typing means any object of the right shape fits a type.
+W "A class is like a template for objects."
+S Explains state and behaviour, valid construction, identity versus value types, and when not to use a class.
+#SHEET Encapsulation
+Q What is encapsulation, and why does it matter?
+A Encapsulation means an object hides its internal state and only lets it change through methods that keep it valid. Instead of letting any code set `order.status = 'shipped'`, the order has a `ship()` method that checks it's been paid first. That puts each rule in one place, so the object can never be in an impossible state, and I can change the internals later without breaking callers. In practice that means private fields, small public interfaces, returning copies or read-only views rather than internal collections, and avoiding getters and setters for every field, which just expose the data with extra steps.
+F How private is private? || Java and C# enforce it at compile time; TypeScript's `private` is compile-time only, while `#field` is enforced at runtime; Python relies on the underscore convention.
+F What's wrong with getters and setters everywhere? || They expose internal state, so rules leak out into callers. Expose behaviour instead.
+F How do you protect internal collections? || Return a copy or a read-only view, so callers can't mutate them behind the object's back.
+W "Making fields private."
+S Explains protecting invariants through behaviour, giving an example, plus the language differences and the getter-setter trap.
+#SHEET Inheritance
+Q When would you use inheritance, and when composition?
+A I use inheritance only for a genuine is-a relationship, where the child can be used anywhere the parent is expected without surprising anyone. That's the Liskov substitution principle. Even then I keep hierarchies shallow, because inheritance is the tightest coupling there is: children depend on the parent's internals. When I just want to reuse behaviour, I use composition: the class holds the other object and delegates to it. That keeps things loosely coupled, lets me swap the part in tests, and avoids deep, fragile class trees.
+F What's the Liskov substitution principle? || Subtypes must be usable through the parent's interface without breaking expectations: no stricter preconditions, no weaker guarantees. Square-extends-Rectangle is the classic violation.
+F What's the fragile base class problem? || Changes inside a parent, such as which method calls which, can silently break subclasses, because they depend on its behaviour, not just its interface.
+F Why aren't C# methods virtual by default? || So that overriding is a deliberate design decision. A class author has to plan for extension, which avoids accidental fragile base classes. Java chose the opposite default.
+F What's the diamond problem? || With multiple inheritance, two parents can define the same method, so which one wins? Python resolves it with the method resolution order; Java and C# avoid it by allowing only one parent class.
+W "Inheritance is for code reuse."
+S "Inheritance models is-a and gives substitutability; for reuse alone I'd use composition."
+W "Always prefer composition."
+S Gives the nuance: inheritance is right for true is-a hierarchies and framework extension points, such as custom exception types.
+W Defines the terms only.
+S Uses a concrete case, for example: "A savings account that limits withdrawals is subtly not a drop-in bank account, so I'd make that limit explicit to callers."
+#SHEET Abstraction and interfaces
+Q What's the difference between an abstract class and an interface, and which would you choose?
+A An interface is a pure contract: it says what a type can do, with no state, and a class can implement many of them. An abstract class is a partial implementation: it can hold state and shared code, but a class can only extend one. I default to interfaces, because they keep coupling low and are easy to fake in tests. I use an abstract class when several implementations genuinely share code and state, such as a template method where the base class fixes the algorithm and children fill in the steps.
+F What does "program to an interface" buy you? || Callers depend on a contract, so you can swap implementations (a new payment provider, an in-memory repository) and test with fakes, without touching the calling code. That's dependency inversion.
+F What's a leaky abstraction? || When details the abstraction was meant to hide show through, such as network timeouts behind a "simple" method call. The fix is to make the contract honest: return results that can fail, and document timeouts.
+F Structural or nominal typing? || Nominal (Java, C#) means a type must declare that it implements an interface. Structural (TypeScript, Python protocols) means matching the shape is enough: more flexible, with some risk of accidental matches.
+F What's the interface segregation principle? || Clients shouldn't depend on methods they don't use, so prefer several small, focused interfaces over one large one.
+W "Interfaces have no code, abstract classes do." (Also out of date: Java and C# interfaces can have default methods.)
+S Compares purpose: contract vs partial implementation. Then the practical limits: one parent class, state, coupling.
+W Stops at the definition.
+S Shows why it matters with an example from your own work, such as: "Our checkout depended on a `PaymentGateway` interface, so switching providers meant writing one adapter, and every test used a fake."
+#SHEET Polymorphism
+Q What is polymorphism? Give an example.
+A Polymorphism means one piece of code can work with many types, and each type responds in its own way. For example, a notification service holds a list of channels — email, SMS, push — all implementing a `send` method. The service just calls `send` on each one, and the runtime picks the right implementation based on the object's actual type. That's dynamic dispatch. The benefit is that adding a new channel means writing one new class, without changing the code that sends notifications: the open/closed principle.
+F Overloading or overriding? || Overriding is a subclass replacing a method with the same signature, chosen at runtime by the object's real type. Overloading is several methods with the same name and different parameters, chosen at compile time by the declared argument types.
+F How does dynamic dispatch work? || Each object knows its class, and each class has a table of method implementations (a vtable in Java and C#). A call looks up the method in the actual object's table at runtime.
+F What's duck typing? || "If it has the method, you can call it." There's no declared relationship: Python and JavaScript check at runtime, while TypeScript and Python protocols check the shape at compile time.
+F Is a switch statement on type always bad? || No. If the set of types is closed and operations change more often, sealed types with an exhaustive switch are clearer, and the compiler catches missing cases. Polymorphism wins when new types keep arriving.
+W "Polymorphism means many forms."
+S Defines it by its effect: one call site, many behaviours, chosen at runtime.
+W The animals example: "a dog barks and a cat meows."
+S A real example, like notification channels or payment gateways, plus the benefit: new types without changing callers.
+W Treats switches as always wrong.
+S Mentions the trade-off: sealed types and exhaustive switches when operations, not types, are what change.
+#SHEET Collections
+Q How do you choose between a list, a map and a set?
+A I start from the question the code asks most often. If I need things in order or by position, it's a list. If I'm looking things up by a key, like a customer ID, it's a map, because lookups are constant time on average instead of scanning the whole list. If I mainly need uniqueness or fast 'have I seen this?' checks, it's a set. A common real fix is code doing `contains` on a big list inside a loop: switching that to a set changes it from O(n²) to roughly O(n).
+F How does a hash map work? || It turns the key into a hash code, uses that to pick a bucket, then compares keys within the bucket. Lookups are O(1) on average, and degrade when many keys collide. That's why keys need good, consistent `hashCode` and `equals` implementations, and mustn't change while they're in the map.
+F When would you use a sorted map instead? || When you need ordered iteration or range queries, such as "all orders between these two timestamps". You pay O(log n) per operation.
+F What's the difference between an array and a linked list? || An array keeps items next to each other in memory: fast access by index, and cache-friendly, but inserting in the middle shifts everything. A linked list inserts quickly at a known node, but has to walk to find anything, and is cache-unfriendly. Array-backed lists win in practice almost every time.
+F Why can't a list be a dictionary key in Python? || Lists are mutable, so their hash could change after insertion and the map would lose them. Use a tuple.
+W "Lists are ordered, sets are unique, maps have keys."
+S Chooses by the operation that matters (lookup, ordering, uniqueness) and gives the cost of each.
+W No example.
+S A concrete win, for example: "A nightly job checked 50,000 IDs against a list. Switching to a set took it from minutes to seconds." Use a real one from your own work if you have it.
+#SHEET Error handling
+Q How do you approach error handling in a service?
+A I separate expected failures, like invalid input or a declined card, from unexpected ones, like bugs or a database outage. Expected failures get specific error types, or result types, and callers handle them deliberately. Unexpected ones I let travel up to a boundary, the request handler or message consumer, which logs once with context like the order ID, returns a safe response, and lets alerting pick it up. When I catch and rethrow, I wrap the error with context and keep the original cause. Resources are always released with `finally` or the language's cleanup construct. And I never swallow an exception silently.
+F Exceptions or result types? || Exceptions suit unexpected failures that should travel up the stack. Result types make expected failures part of the function's signature, so callers can't forget them. Many codebases use both.
+F Checked exceptions in Java: good or bad? || The idea of making failure part of the signature is good, but in practice they spread `throws` clauses everywhere and encourage swallowing. Most modern Java uses unchecked domain exceptions and documents them.
+F What should go into an error log? || A clear message, the error type and stack trace, the cause chain, identifiers (request ID, order ID) and the operation being attempted. Never passwords, tokens or card data.
+F How do you handle errors from several concurrent tasks? || Decide whether one failure should cancel the others (Python's `TaskGroup`, Java's structured concurrency) or whether you want every outcome (`Promise.allSettled`), and make sure no failure goes unobserved.
+W "I wrap things in try/catch and log the error."
+S Distinguishes expected from unexpected failures, says where each is handled, and explains why logging happens once, at the boundary.
+W Talks only about syntax.
+S Mentions what makes errors debuggable in production: the cause chain, identifiers, typed errors mapped to the right status codes, and alerts on unexpected errors.
+#SHEET Generics
+Q What are generics, and why use them?
+A Generics let you write code once with a type parameter, like `List<T>` or `Page<T>`, and reuse it for many types while the compiler still checks everything. Without them you'd either duplicate code per type, or use `Object` or `any` and cast, which moves errors to runtime. Constraints let generic code rely on features of `T`, like being comparable or having an ID. One detail I always keep in mind: Java and TypeScript erase generic types at runtime, so a `T` can't be checked or created at runtime there, while C# keeps them.
+F What's type erasure, and what can't you do because of it? || Java removes type arguments after compiling, for backwards compatibility. You can't do `new T()`, create a `T[]`, check `instanceof List<String>`, or overload on different generic arguments. TypeScript erases all types, so data from outside must be validated at runtime.
+F Explain covariance and contravariance. || Covariant: a producer of `Dog` can be used as a producer of `Animal` (read-only). Contravariant: a consumer of `Animal` can be used as a consumer of `Dog`. Mutable containers are invariant, because they both produce and consume. In Java: Producer `extends`, Consumer `super`.
+F Why can't you write `List<int>` in Java? || Generics work only with reference types, so primitives are boxed (`Integer`), costing memory and allowing `null`. C# generics support value types directly.
+F When would you not make something generic? || When there's only one concrete use. Generic signatures are harder to read, so add type parameters when real reuse appears.
+W "Generics are like templates, for any type."
+S Explains the benefit: reuse without losing compile-time checks, compared with duplicating code or using `Object` or `any` and casting.
+W Never mentions runtime.
+S Knows the runtime story for their language (erased or reified) and what it rules out.
+#SHEET Functional programming
+Q What is functional programming, and how do you use it day to day?
+A It's a style built on pure functions, immutable data, and composing small steps, like filter, map and reduce. I don't write purely functional code, but I use the ideas constantly: business rules like pricing or validation are pure functions over immutable records, so they're easy to test with no mocks, and the I/O sits in a thin layer around them. Immutability also removes a whole class of bugs, both shared-state bugs and concurrency bugs, because data that can't change can't be changed by someone else at the wrong moment.
+F What's a pure function, and why does it matter? || Its output depends only on its inputs, and it changes nothing outside itself. You can test it with just inputs and outputs, cache it, and run it in parallel safely.
+F Doesn't immutability waste memory? || Sometimes a bit. Copies are usually small and short-lived, and garbage collectors handle that well. Where it matters (big collections, hot loops), use persistent data structures or controlled local mutation inside a function that's still pure from the outside.
+F What's the difference between map and forEach? || `map` transforms each item into a new collection, and should have no side effects. `forEach` exists purely for side effects and returns nothing.
+F What's lazy evaluation? || Computing values only when they're needed. Generators, streams and LINQ let you chain operations over huge sequences and stop early, but they can be single-use or re-run on every enumeration.
+W "It's using map and filter instead of loops."
+S Explains the principles (purity, immutability, composition) and the benefits: testability, safety under concurrency, readability.
+W All or nothing: "FP is better than OOP."
+S Pragmatic: functional core with an imperative shell, mixed with objects for state and boundaries, and loops where they read better.
+#SHEET Values, references and memory
+Q What's the difference between value types and reference types?
+A A value-type variable holds the data itself, so assigning it copies the data. A reference-type variable holds a pointer to an object on the heap, so assigning it copies the pointer, and both variables then refer to the same object, which means a change through one shows through the other. In Java, primitives are values and everything else is a reference. C# adds structs as user-defined value types. In Python and JavaScript, objects are always shared, while immutable things like numbers and strings behave like values. Most aliasing bugs come from forgetting this, which is why I make shared data immutable or copy it at boundaries.
+F Shallow vs deep copy? || A shallow copy duplicates the outer object but shares the objects inside it. A deep copy duplicates everything, recursively. Spread syntax, `dict(x)` and record `with` are shallow.
+F How does garbage collection work? || The runtime tracks which objects are reachable from the roots (stacks and static fields) and frees the rest. Most collectors are generational, because most objects die young. Python mainly uses reference counting, plus a cycle collector.
+F Can you have a memory leak with garbage collection? || Yes: anything still referenced can't be collected, such as unbounded caches, listeners never removed, or closures capturing big objects.
+F When would you use a struct in C#? || For small, immutable values like a point or a money amount, where copying is cheap and value semantics are what you want. Not for large or mutable data.
+W "Value types are on the stack and reference types are on the heap."
+S Explains by copy behaviour on assignment (which is what affects your code), and mentions that where things live is an implementation detail.
+W Stops at definitions.
+S Connects it to real bugs (aliasing, shared lists, leaks) and the habits that prevent them: immutability, defensive copies, bounded caches.
+#SHEET Concurrency
+Q What's a race condition, and how do you prevent one?
+A A race condition is when the result depends on the timing of concurrent operations. The classic one is check-then-act: two withdrawals both check the balance, both see enough money, and both go through. Inside one process I'd prevent it with immutability first, then atomics or a lock around the smallest critical section. But services usually run as several instances, so the real fix is in the database: make the check and the change one atomic statement, like an `UPDATE` with the balance condition in the `WHERE`, or use optimistic locking with a version column, with idempotency keys so retries are safe.
+F Concurrency or parallelism? || Concurrency is dealing with many tasks over the same period, interleaving them, often on one thread. Parallelism is executing tasks at the same instant on multiple cores. Async I/O is concurrency; a CPU-bound process pool is parallelism.
+F What's a deadlock, and how do you avoid one? || Two or more tasks each hold a lock the other needs, so they wait forever. Avoid it by always taking locks in a consistent order, keeping critical sections short, using timeouts, and not calling external code while holding a lock.
+F Threads or async/await? || Async (or Java virtual threads) for I/O-bound work: cheap, so thousands of concurrent waits are fine. Threads or processes for CPU-bound work that needs multiple cores.
+F Optimistic or pessimistic locking? || Optimistic means checking a version on write and retrying on conflict; it's best when conflicts are rare. Pessimistic means locking the row up front (`SELECT … FOR UPDATE`); it's best when conflicts are frequent and retries are expensive.
+W "Use locks."
+S Ranks the options: avoid shared mutable state, then atomics, then locks. Then says where the fix belongs in a multi-instance system: the database.
+W Abstract definition only.
+S A concrete story, such as double withdrawals or duplicate orders under retries, with how it was found (under load, or from logs) and fixed (a conditional update plus idempotency keys).

@@ -1,0 +1,41 @@
+#DOC AI and LLMs
+#SHEET AI overview
+Q When would you use an LLM rather than traditional ML or code?
+A I start from the problem. If the rules are clear and stable, plain code is exact and free. If I'm predicting a number or category from structured data, like churn or fraud, a classic model such as gradient-boosted trees is usually more accurate, cheaper and easier to explain. LLMs earn their place when the input or output is language, like summarising tickets, extracting fields from free text or answering questions over documents, especially when we don't have labelled training data. Even then, I wrap the model in deterministic checks for anything that must be exact, and I measure it against a simple baseline.
+W "LLMs can do everything now."
+S Matches the approach to the problem and data, values simple baselines, and keeps exact logic in code.
+#SHEET ML theory
+Q Your fraud model is 99% accurate. Is it good?
+A Not necessarily. If only 1% of transactions are fraud, a model that always says 'not fraud' is 99% accurate and catches nothing. I'd look at the confusion matrix, precision and recall, and PR-AUC, then choose the threshold by the business cost of each error: a missed fraud costs the transaction and a chargeback, while a false alarm costs customer friction. I'd also check it was evaluated on a time-based split, with no leakage, and that we monitor drift after launch.
+W "Yes, 99% is excellent."
+S Recognises class imbalance, uses precision and recall, sets the threshold by cost, and checks the split and drift.
+#SHEET LLMs
+Q How would you choose an LLM for a new feature?
+A I'd build a small evaluation set from real examples of the task first, with clear pass criteria. Then I'd try a frontier model to see what's achievable, and step down to cheaper, faster models until quality drops below the bar. Alongside quality, I'd compare latency, cost per request at our expected volume, context and output limits, tool-calling reliability, and data terms, such as UK or EU processing and no training on our data. I'd put the provider behind our own interface, pin the version, and rerun the evals before any upgrade.
+W "Use whichever model tops the leaderboard."
+S Chooses with a task-specific eval, then trades quality against latency, cost and data terms, with versions pinned and providers abstracted.
+#SHEET Context engineering
+Q How do you make an LLM feature reliable?
+A Mostly by controlling its context. A clear system prompt states the role, rules, audience and format, with the reasons behind them, plus a few varied examples. Each call gets only what that step needs: the relevant retrieved passages with sources, the tools for that step, recent history plus a summary, and trimmed tool results, with untrusted content clearly separated from instructions. I break complex tasks into smaller calls, use structured outputs for anything code reads, and give the model a way to say it doesn't know. Prompts are versioned like code, and every change runs against an evaluation set before it ships.
+W "I tweak the prompt until it works."
+S Treats context as a budget, structures instructions and data, decomposes tasks, and tests every change against evals.
+#SHEET Embeddings
+Q What are embeddings, and how would you use them?
+A An embedding is a vector representation of meaning: a model maps text to numbers so that similar meanings end up close together, usually compared by cosine similarity. I'd use them for semantic search and for retrieval in RAG: chunk the documents, embed each chunk with metadata like tenant and permissions, store them in something like pgvector, then embed the user's query and fetch the nearest chunks. I'd choose the model with a retrieval eval on our own data, record the model version with every vector, and combine it with keyword search for exact terms like order numbers.
+W "They turn text into numbers for AI."
+S Explains similarity, chunking, metadata and permissions, model choice by eval, versioning, and hybrid search.
+#SHEET Vector search
+Q How would you build search over our help-centre articles?
+A Hybrid search: BM25 keyword search for exact terms like product codes, plus vector search over chunk embeddings for meaning, fused with reciprocal rank fusion. Permissions and language filters apply inside the query. I'd retrieve around 50 candidates and re-rank them with a cross-encoder, keeping the top few. Since we already run PostgreSQL, I'd start with pgvector's HNSW index and full-text search, and measure recall@k and answer quality on a labelled set of real queries before tuning anything.
+W "Put everything in a vector database."
+S Combines keyword and vector search, filters in the query, re-ranks, and measures recall on real queries.
+#SHEET RAG
+Q Design a RAG system for our help centre.
+A Ingestion converts articles to clean, structured text, splits them by headings into chunks of a few hundred tokens with a little overlap, prefixes each with its title and section, and stores embeddings plus keyword indexes with metadata like language, product, last updated and visibility. Per question, I'd run a hybrid search with filters inside the query, re-rank about 50 candidates down to five, and prompt the model to answer only from those, citing document IDs, which I validate, and to say when it doesn't know. I'd evaluate retrieval and answers separately on a set of real questions, and re-ingest incrementally when articles change.
+W "Put the docs in a vector database and ask the model."
+S Designs ingestion, chunking, hybrid retrieval with filters, re-ranking, grounded and cited generation, and separate retrieval and answer evaluation.
+#SHEET Structured outputs
+Q How do you reliably get JSON out of an LLM?
+A I use the provider's native structured outputs: a JSON schema, enforced by constrained decoding, so the response is always valid JSON in the right shape, or strict tool use when the output is an action. The schema uses enums and formats, and includes an 'other' or null option so the model isn't forced to guess. Then I validate in code anyway, because valid isn't correct: I check business rules, like whether the order ID exists and belongs to the customer. On failure I retry once with the error, then fall back to a person, and I track the failure rate in our evals.
+W "Ask it to reply in JSON and parse it."
+S Uses constrained decoding, designs schemas with escape values, validates business rules, and handles failures deliberately.

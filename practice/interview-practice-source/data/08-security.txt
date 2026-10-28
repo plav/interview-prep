@@ -1,0 +1,48 @@
+#DOC Security and Compliance
+#SHEET Security overview
+Q How do you build security into a new feature?
+A At design time I run a quick threat model: sketch the data flows and trust boundaries, then walk STRIDE, so spoofing, tampering, repudiation, disclosure, denial of service and privilege escalation, against each flow, and record mitigations. In the build, I lean on the OWASP Top 10, where the 2025 edition puts broken access control first and adds supply-chain failures and mishandled error conditions: authorisation on every object, parameterised queries, output encoding, failing closed on errors, and pinned, scanned dependencies. The controls are layered, so one failing isn't a breach, and we add logging and alerts so we'd notice an attack. Security tests go into CI like any other test.
+W "We get a pen test before release."
+S Threat-models at design time, applies OWASP controls while building, layers defences, and automates checks in CI.
+#SHEET Basic security principles
+Q You find an API key committed to a public repository. What do you do?
+A Revoke or rotate the key immediately, because it should be treated as compromised the moment it was public: bots scan GitHub within minutes. Then check the provider's logs for any use of the key since the commit, and contain anything suspicious. After that, remove it from the code and history to reduce noise, though that doesn't undo exposure. Then fix the cause: move the secret to a secrets manager or replace it with role-based access, turn on secret scanning with push protection, and add a pre-commit hook. And I'd write it up blamelessly, so the process improves rather than someone feeling blamed.
+W "Delete the commit."
+S Rotates first, checks for misuse, then removes it and fixes the process with secret managers, scanning and push protection.
+#SHEET Advanced security principles
+Q How do you secure the software supply chain?
+A I treat dependencies and the pipeline as attack surface. Dependencies are pinned with lock files, updated through automated pull requests, and scanned for known vulnerabilities and malicious packages; new ones get a quick review. CI uses OIDC instead of stored cloud keys, least-privilege tokens, actions pinned to commit SHAs, and protected branches. Each build produces an SBOM and a signed provenance attestation, and deployment only admits signed images that pass policy. That's also what the EU Cyber Resilience Act now expects of products sold in the EU: vulnerability reporting since September 2026, and SBOMs and secure-by-design requirements from December 2027.
+W "We run npm audit."
+S Covers dependencies, pipeline hardening, SBOMs, signing and provenance, deploy-time verification, and the regulatory context.
+#SHEET Authentication and authorisation
+Q How would you secure a new API and its web app?
+A I wouldn't build login myself. Users sign in through an identity provider using OpenID Connect, with the authorization code flow plus PKCE, as RFC 9700 now requires, ideally with passkeys or MFA. For the browser app I'd use a backend-for-frontend, so tokens never reach JavaScript and the browser only holds an HttpOnly session cookie. The API validates every access token fully: algorithm, signature against the provider's keys, expiry, issuer and audience. Then it authorises every request and every object: roles for coarse permissions, and ownership or tenant checks on each resource, because broken object-level authorisation is the most common serious API bug. Access tokens are short-lived and refresh tokens rotate.
+F Authentication or authorisation? || Authentication establishes who you are; authorisation decides what you may do. Failing the first is a 401; failing the second is a 403.
+F OAuth or OpenID Connect? || OAuth 2.0 delegates access to APIs through access tokens. OIDC adds identity on top through an ID token, so apps can log users in.
+F Why PKCE? || It binds the authorisation code to the client that started the flow, so an intercepted code is useless without the secret verifier. It's now required for all clients, not just mobile.
+F Sessions or JWTs? || Sessions are easy to revoke and simple for web apps. JWTs verify without a lookup, which suits APIs and many services, but they're hard to revoke, so keep them short-lived.
+W "We use JWTs, so it's secure."
+S Names every verification step (algorithm, signature, expiry, issuer, audience), and separates token validation from authorisation.
+W Talks only about login.
+S Puts as much weight on authorisation: object-level checks, tenant isolation, and enforcement in the service that owns the data.
+#SHEET PCI DSS
+Q How would you keep a new checkout's PCI scope small?
+A By making sure card data never touches our systems. I'd use the payment provider's hosted fields or redirect, so the customer's browser sends card details straight to the provider and we only ever receive a token. That keeps us eligible for SAQ A, provided we meet its eligibility criteria, which since March 2025 means confirming the payment page isn't exposed to script attacks: I'd minimise and control third-party scripts on checkout, with a content security policy and subresource integrity. We'd store only provider tokens, scrub logs and analytics for card numbers, keep test cards in non-production, and still run the quarterly external scans. Anything that must handle card data goes in an isolated, segmented environment.
+W "We'd encrypt the card numbers."
+S Avoids holding card data at all through tokenisation and hosted fields, explains scope and SAQ eligibility, and controls checkout scripts.
+#SHEET Payments domain
+Q Walk me through what happens when a customer pays by card, and how you'd build it safely.
+A The card details go straight to the payment provider through its hosted fields, so card numbers never touch our systems and our PCI scope stays small. The provider runs 3-D Secure where strong customer authentication applies, then sends an authorisation through the acquirer and card network to the issuer, which approves and holds the funds. We capture when we're ready, often on dispatch. The money settles to us a day or few later, net of fees. In the system, every call carries an idempotency key so retries can't double-charge, amounts are integers in pence, the payment status is an explicit state machine updated by signed webhooks, and we reconcile daily against the provider's settlement reports. Refunds and chargebacks feed into the same ledger.
+F Authorisation or capture? || Authorisation checks and holds funds; capture actually claims them. Separating them lets you charge on dispatch, or void without a refund if the order is cancelled.
+F Refund or chargeback? || A refund is the merchant returning money voluntarily. A chargeback is the cardholder disputing through their bank, which forcibly reverses the payment and adds a fee unless you win the dispute with evidence.
+F What's SCA, and how does 3-D Secure relate? || SCA is the UK and EU legal requirement for two-factor authentication on most online payments. 3DS2 is the card protocol that meets it, often frictionlessly, and shifts fraud liability to the issuer.
+F How do you prevent double charges? || Idempotency keys on every payment request, stored with the result, plus idempotent webhook handling and a state machine that rejects impossible transitions.
+W "We call Stripe's API and it charges the card."
+S Explains the chain (PSP, acquirer, network, issuer) and the separate stages: authorise, capture, settle, refund or dispute.
+W Treats payment as one synchronous call.
+S Designs for timeouts and asynchrony: idempotency keys, webhooks as the source of truth, a state machine, daily reconciliation, integer money.
+#SHEET Domain knowledge
+Q How do you get up to speed in a new business domain?
+A I start by following the money and the customer journey end to end, then draw the main life cycles, like orders and payments, including the unhappy paths. I read the data model, because it shows what the business really tracks, and I spend time with support, operations and finance, since tickets and escalations reveal the edge cases. I keep a glossary and push for the same terms in code and conversation. And I learn the metrics my team moves and the rules that constrain us: in UK payments, for example, strong customer authentication, PCI DSS, Consumer Duty and GDPR. Within a few weeks that lets me question requirements and spot problems before they become bugs.
+W "I read the documentation."
+S Has a deliberate method (money, flows, data, people, language, metrics, constraints), and shows how it changed technical decisions.

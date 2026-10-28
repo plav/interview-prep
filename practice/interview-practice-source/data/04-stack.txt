@@ -1,0 +1,58 @@
+#DOC Backend and Frontend Stack
+#SHEET Node.js
+Q How does Node.js handle thousands of concurrent requests on one thread?
+A Node runs JavaScript on a single thread with an event loop, and does I/O without blocking. When a request queries a database or calls an API, Node hands the work to the operating system or libuv's small thread pool, used for things like file system and some crypto calls, and moves on to the next request; the callback or promise continuation runs when the result comes back. So thousands of requests that mostly wait on I/O share one thread cheaply. The catch is anything CPU-heavy, like a big JSON parse, a sync crypto call or a tight loop, which blocks every request. I watch event-loop lag, move heavy work to worker threads or another service, and scale across cores with multiple processes or containers.
+F How do you detect a blocked event loop? || Measure event-loop delay (`perf_hooks.monitorEventLoopDelay`) and alert on it; profile with the inspector or clinic.
+F Streams? || Process large files and responses in chunks with backpressure, using `pipeline`, instead of loading them into memory.
+F Which version? || The current active LTS release, with even-numbered versions becoming LTS.
+W "Node is asynchronous, so it's fast."
+S Explains non-blocking I/O, the thread pool, what blocks the loop, how to detect it, and how to scale across cores.
+#SHEET Express
+Q How do you structure an Express app, and handle errors?
+A Middleware order is the structure: security headers, request IDs and logging first, then body parsing with size limits, authentication, routes grouped by feature, a 404 handler, and one error-handling middleware last. Route handlers stay thin: validate the input, call a service, map the result to a response, so business logic is testable without HTTP. In Express 5, a rejected promise in an async handler goes to the error middleware automatically, so I throw typed errors and let one place turn them into consistent problem-details responses, with no stack traces leaked and the error logged with the request ID. Graceful shutdown and health endpoints round it off.
+F What changed in Express 5? || Async errors are forwarded automatically, path matching is stricter, and some old APIs were removed.
+F How do you secure it? || Helmet for headers, rate limiting, validated input, strict CORS, authentication middleware, and authorisation checks per resource.
+F How do you test it? || Unit-test services directly, and test routes with Supertest against the app, with real dependencies in containers.
+W "Routes, controllers and models."
+S Explains middleware order, thin handlers over services, centralised error handling in Express 5, and security and testing.
+#SHEET Sequelize
+Q How do you use an ORM without causing performance problems?
+A I treat it as a convenience, not a way to avoid knowing SQL. The classic trap is the N+1 query: loading 50 orders, then lazily fetching each customer, so 51 queries instead of one or two. I eager-load what I need with `include`, select only the needed columns, paginate lists, and check the generated SQL and query counts in development and tests. Writes that must succeed together go in a transaction. Schema changes go through versioned migrations, never `sync` in production. For reporting or complex queries, I drop to raw, parameterised SQL. And I keep the ORM behind repositories, so swapping it later, say to Prisma or Drizzle, stays contained.
+F How do you spot N+1 queries? || Log queries per request, and alert on counts in tests or traces; one query per row is the signature.
+F What's Sequelize's status? || Version 6 is the stable line, but maintenance is slow and version 7 has been in alpha since 2022, so treat it as a dependency risk and compare alternatives for new services.
+F Transactions? || Managed transactions that commit or roll back automatically, with the transaction passed to every query inside.
+W "The ORM handles the database for me."
+S Knows the N+1 trap and its fixes, checks generated SQL, uses transactions and migrations, and drops to SQL when needed.
+#SHEET .NET
+Q What are the DI lifetimes in ASP.NET Core, and where do they go wrong?
+A Singleton is one instance for the app's lifetime, scoped is one per request, and transient is a new one every time it's resolved. DbContext is scoped, because it isn't thread-safe and tracks one unit of work. The classic bug is a captive dependency: a singleton taking a scoped service in its constructor, so that one DbContext lives forever and gets shared across requests. Background services should create a scope per unit of work instead. The development container's scope validation catches some of these at start-up.
+F Minimal APIs or controllers? || Minimal APIs for new, focused services, with less ceremony and good performance; controllers for large apps already built around them.
+F Which .NET version would you choose today? || .NET 10, the LTS until November 2028. Both 8 and 9 lose support on 10 November 2026.
+W Lists the three lifetimes.
+S Explains which services need which lifetime, and the failure modes: captive dependencies, thread safety, background scopes.
+#SHEET Angular
+Q What changed in modern Angular, and why does it matter?
+A Angular moved from Zone.js-driven change detection to signals. Signals track exactly which values a template reads, so Angular updates only what changed, without patching every async API. That's why zoneless is the default since v21 and OnPush since v22. Components are standalone, templates use built-in control flow like `@if`, `@for` and `@defer`, inputs and outputs are signal-based, and async data comes through resources like `httpResource`, with loading and error states built in. Signal Forms are now stable too. RxJS is still the right tool for event streams like typeahead, bridged with `toSignal`.
+W Describes NgModules and Zone.js as current.
+S Explains the signal-first model, zoneless and OnPush defaults, and when RxJS still fits.
+#SHEET React
+Q When should you use useEffect?
+A Only to synchronise a component with something outside React: a subscription, a browser API, a timer or a non-React widget, with a clean-up function. I don't use it to derive data from props or state, since I compute that during render; or to react to user actions, which belongs in event handlers; or to fetch data in modern apps, where server components or a library like TanStack Query handle caching and races properly. If an effect needs the latest value of something without re-running, `useEffectEvent` in React 19.2 solves that. And with the React Compiler stable, I rarely add `useMemo` or `useCallback` by hand.
+W "For side effects and API calls."
+S Narrows effects to synchronising with external systems, names the common misuses, and gives the modern alternatives.
+#SHEET iOS app development
+Q How would you structure a new iOS app?
+A Swift and SwiftUI, with the current Xcode. Views stay thin and read state from `@Observable` models marked `@MainActor`, so UI updates are always on the main thread; networking, persistence and authentication sit behind protocols, so they're easy to fake in tests. I use async/await and actors with Swift 6 data-race checking on, `Codable` for the API, SwiftData for local storage, and the Keychain for tokens. Features live in Swift packages as the app grows. Tests use Swift Testing, with a few UI tests on critical flows, and CI builds, tests and uploads to TestFlight automatically. I also plan for the lifecycle, saving state when the app goes to the background, and for App Review and privacy labels from the start.
+F SwiftUI or UIKit? || SwiftUI for new screens; UIKit where you need fine control or are extending an existing app. They interoperate.
+F How do you avoid data races? || Swift 6 strict concurrency, actors for shared mutable state, and `@MainActor` for UI.
+F How do you handle a flaky network? || Async requests with timeouts, offline-friendly caching, clear retry UI, and idempotent server APIs.
+W "MVC with storyboards."
+S Describes SwiftUI with observable models, protocol boundaries, Swift 6 concurrency, secure storage, testing and an automated release pipeline.
+#SHEET Android app development
+Q How would you structure a new Android app?
+A Kotlin and Jetpack Compose, following Google's recommended architecture. Each screen has a ViewModel exposing a single `StateFlow` of UI state, modelled as a sealed interface for loading, loaded and error, and the composable collects it with lifecycle awareness and sends events back up. Repositories in the data layer combine Retrofit or Ktor for the network with Room as the local source of truth, all with coroutines on the right dispatchers. Hilt wires dependencies, WorkManager handles background sync, and tokens are protected with the Keystore. Tests cover ViewModels with coroutine test tools and key flows with Compose UI tests, and CI builds a signed App Bundle and ships through Play testing tracks with staged rollouts, targeting the API level Play requires.
+F How do you survive configuration changes and process death? || State in ViewModels, small UI state in `rememberSaveable` or `SavedStateHandle`, and persistent data in Room.
+F Compose or Views? || Compose for new UI; Views interoperate for existing screens and some libraries.
+F What changes when you raise the target API? || Behaviour changes such as edge-to-edge, predictive back and large-screen rules, so test on the new Android version first.
+W "Activities with some fragments."
+S Describes Compose with ViewModels and StateFlow, a layered data architecture, coroutines, lifecycle handling, testing, and the Play release process and target-API rules.

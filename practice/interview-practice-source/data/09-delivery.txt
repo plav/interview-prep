@@ -1,0 +1,74 @@
+#DOC Delivery and Operations
+#SHEET Git commands
+Q Merge or rebase?
+A Rebase for my own feature branch, to keep it current with main and to tidy commits before review, using fixup commits and autosquash, then `--force-with-lease`. Never rebase shared branches like main, because rewriting published history breaks everyone else's copies; there I use merges, or revert to undo. For integrating pull requests, the team picks one strategy, often squash or rebase merges for a linear main. And if anything goes wrong, the reflog almost always has the commits back.
+W "Rebase is cleaner."
+S Explains when each is safe, the shared-history rule, and recovery with the reflog.
+#SHEET GitHub
+Q How would you set up a repository for a team?
+A A ruleset on main requiring pull requests, an approving review including CODEOWNERS for sensitive paths, passing checks, and no force-pushes. Squash merges, with auto-merge and branch clean-up. Workflows set minimal token permissions, pin actions to SHAs, and use OIDC to reach the cloud, so there are no stored keys. Staging and production environments have their own secrets, and production needs approval. Secret scanning with push protection, Dependabot, code scanning and dependency review are on. Access is through teams under SSO.
+W "Protect the main branch."
+S Covers rulesets, ownership, merge policy, workflow security, environments and security features together.
+#SHEET Pull requests
+Q What makes a good code review?
+A It starts with the author: a small, focused PR with a clear why, what and how-I-tested-it, already green in CI and self-reviewed. As a reviewer I prioritise correctness and edge cases, security, design and tests over style, which tools should handle. I make comments specific, explain the reason, and label them as blocking, suggestion or nit, so the author knows what matters. And I review quickly, because slow reviews hold up the whole team. AI review tools are a useful first pass, but a human still owns design and security decisions.
+W "Check the code works and follows standards."
+S Covers author responsibilities, review priorities, comment style, speed, and the role of automation and AI.
+#SHEET CI/CD
+Q Describe a good CI/CD pipeline.
+A Every pull request gets fast feedback in under ten minutes: lint, type checks, unit tests and security scans, then integration tests. On merge, we build one immutable, signed artefact tagged with the commit SHA, and promote that same artefact through staging, with smoke and end-to-end tests, to production. Production uses a canary or blue/green rollout with automated health checks against our SLOs and automatic rollback, and migrations are backward-compatible so rollback always works. Credentials come through OIDC, not stored keys. We track the DORA metrics to see where the pipeline slows us down, and we treat flaky tests as bugs.
+W "It runs the tests and deploys."
+S Covers fast feedback, build once and promote, progressive delivery with automatic rollback, safe migrations, security, and measurement.
+#SHEET Dev testing
+Q How do you decide what to test, and at which level?
+A I test behaviour at the cheapest level that gives real confidence. Business rules and edge cases get fast unit tests. Anything crossing a boundary, like SQL, serialisation, queues or HTTP clients, gets integration tests against real dependencies with Testcontainers, because mocks there prove little. Between services, consumer-driven contract tests with Pact catch breaking API changes before deployment. Then a small set of end-to-end tests covers the journeys that make money, like checkout, running on every deployment. Every bug fix comes with a regression test, and flaky tests are treated as bugs, not rerun.
+W "We aim for 80% coverage."
+S Chooses test levels by what each proves, uses real dependencies at boundaries, adds contract tests between services, and keeps end-to-end tests few and reliable.
+#SHEET Unit tests
+Q What makes a good unit test, and when do you use mocks?
+A A good unit test checks one behaviour through the public interface, with a name that says what should happen, an arrange-act-assert shape, and no dependence on time, order or network, so it's fast and fails for one clear reason. I inject things like the clock and IDs, so edge cases such as expiry are easy to test, and I use table-driven tests for many similar cases. For dependencies, I prefer simple fakes for interfaces we own, and stubs or mocks only at boundaries we don't, like a payment provider, or when the interaction itself is the behaviour. Over-mocking couples tests to the implementation, so they break on every refactor.
+W "I mock all the dependencies."
+S Tests behaviour, controls time and randomness, prefers fakes, and mocks only at external boundaries.
+#SHEET Automation
+Q Tell me about something you automated.
+A Every release, someone spent about an hour copying configuration between environments by hand, and twice a quarter a typo caused an incident. I moved the configuration into the repository, validated it with a schema in CI, and deployed it through the pipeline with a dry-run diff shown in the pull request. Releases dropped that hour, the configuration incidents stopped, and new environments became one pull request. The key choices were making it idempotent, dry run by default, and owned by the team rather than by me. (An example in STAR shape: lead with the cost of the manual work, and use your own story.)
+W "I wrote a script to do it."
+S Quantifies the toil and risk, explains the safety design (dry run, idempotency, validation), and shows the measurable result and ownership.
+#SHEET Datadog
+Q How would you set up Datadog for a new service?
+A First, unified service tagging, so env, service and version are on every metric, trace and log, which is what makes correlation and deploy comparisons work. Then tracing, with the Datadog tracer or OpenTelemetry, keeping all errors and slow traces through retention filters, plus structured JSON logs with trace IDs injected, and selective indexing with everything archived to S3. I'd define SLOs for availability and latency, with burn-rate alerts that link to runbooks, and build one templated service dashboard. Monitors and dashboards live in Terraform. And from day one I'd watch cost: no high-cardinality metric tags, exclusion filters on noisy logs, and spend tagged by team.
+W "Install the Agent and make some dashboards."
+S Covers tagging, connected traces and logs, SLO-based alerting, configuration as code, and cost control.
+#SHEET Observability with OpenTelemetry
+Q How would you make a set of microservices observable?
+A I'd standardise on OpenTelemetry, so we instrument once and stay free to choose backends. Each service loads the SDK with auto-instrumentation for HTTP, databases and messaging, plus custom spans for key business operations, and the same service name, version and environment on everything. Trace context propagates through HTTP headers and message attributes, so one request is one trace across services. Logs are structured JSON carrying the trace ID, so we can jump from a trace to its logs. Everything goes to an OpenTelemetry Collector, which batches, scrubs personal data, tail-samples to keep every error and slow trace, and exports to our backend. Alerts are on RED metrics and SLOs, not on CPU.
+F Metrics, logs or traces: which first? || Metrics to know something is wrong and alert on it, traces to find where, logs to see exactly what happened. They're most useful linked by trace ID.
+F What does the Collector add? || It decouples apps from vendors: batching, retries, filtering and redaction, tail sampling, extra attributes, and routing to several backends, all changeable without redeploying apps.
+F Head or tail sampling? || Head sampling decides at the start of a request: cheap, but blind to how it ends. Tail sampling decides after the trace completes, so you can keep every error and slow request.
+F What's cardinality, and why does it matter? || The number of unique attribute combinations on a metric. Each one is a separate time series, so unbounded values like user IDs explode storage and cost.
+W "We'd add logging and a dashboard."
+S Describes the three signals linked by trace ID, context propagation across services and queues, and a Collector pipeline.
+W Collects everything.
+S Controls cost and risk: bounded metric attributes, tail sampling, personal-data scrubbing, alerts on SLOs.
+#SHEET Incident management and on-call
+Q Tell me about an incident you were involved in.
+A At around 2pm on a weekday, card payment failures jumped to 30% shortly after a deploy. I was on call; I declared a SEV1, took incident commander, and asked a colleague to handle stakeholder updates every 30 minutes. Because the timing matched the deploy, we rolled back before investigating, and payments recovered within 40 minutes of the first alert. The postmortem found a config change that only failed with one card network's responses, which our tests didn't cover. We added contract tests with recorded provider responses, a canary stage that watches payment success rate, and an alert on success rate by payment method. We haven't had a repeat. (An example structure: replace it with your own real story in STAR form, spending most of the time on what you did and what changed afterwards.)
+F What would you do differently? || Pick something real: declaring sooner, rolling back sooner, or having the right dashboard ready.
+F How do you run a blameless postmortem? || Focus on the timeline and the system's contributing factors, ask "how" not "who", and turn findings into tracked actions that change the system.
+F How do you reduce alert fatigue? || Alert on user-facing symptoms and SLO burn rates, make every page actionable with a runbook, and review and delete noisy alerts regularly.
+F How do you decide severity? || By user and business impact against agreed definitions, erring high and downgrading later.
+W "There was an outage and we fixed it."
+S Clear impact numbers, the mitigation chosen before the root cause, clear roles, and measured time to mitigate.
+W Blames a person or another team.
+S Talks about system contributing factors, and the lasting changes made: tests, canaries, alerts, runbooks.
+#SHEET Performance and load testing
+Q An API endpoint is slow. How do you approach it?
+A First I'd define slow with numbers: which percentile, at what traffic, against what target. Then I'd find where the time goes rather than guessing: a trace of a slow request shows whether it's our code, the database or a downstream call, and a CPU profile or EXPLAIN ANALYZE narrows it to the function or query. The usual culprits are a missing index, N+1 queries, a too-small connection pool, or a slow dependency without a timeout. I'd fix the biggest contributor, then prove the fix with a load test at realistic traffic, comparing p95 and p99 before and after. Finally I'd add a k6 threshold in CI, so it can't quietly regress.
+F Why not use the average? || It hides the tail. A few very slow requests barely move the mean, but they're the ones users notice, and with many calls per page most users hit the tail.
+F What load tests would you run before a big launch? || Smoke, then average load against SLOs, then stress at forecast peak with headroom, a spike test for autoscaling, and a soak test for leaks.
+F What's Little's law used for? || Converting throughput and latency into required concurrency: requests in flight equal arrival rate times latency, which sizes pools, threads and instances.
+F How do you stop one slow dependency taking everything down? || Timeouts, circuit breakers, bulkheads (separate pools), and backpressure or load shedding.
+W "I'd add caching."
+S Measures first: defines the target, finds the bottleneck with traces and profiles, then fixes the biggest contributor.
+W "It's fast on my machine."
+S Proves it under realistic load, with percentiles, and protects it with thresholds in CI.

@@ -1,0 +1,65 @@
+#DOC Foundations
+#SHEET Basic coding principles
+Q What makes code good?
+A Good code is correct first, then easy for the next person to read and change. In practice that means clear names, small functions that each do one thing, and logic that reads top to bottom with early returns instead of deep nesting. I keep each piece of knowledge in one place, but I don't abstract until I've seen the pattern a few times, and I don't build for requirements we don't have yet. Inputs get validated at the boundary, errors are handled rather than swallowed, and tests prove the behaviour. The test I use in review: could a new team member change this safely?
+F Is DRY always right? || No: DRY is about knowledge, not identical-looking code. Two similar blocks that change for different reasons should stay separate.
+F When do you write comments? || To explain why: a decision, a constraint, a workaround. The code itself should say what it does.
+F How do you balance clean code against deadlines? || Keep the change small and tested, and record any shortcut as tracked tech debt, rather than gold-plating or cutting corners silently.
+W "Code that follows the style guide and works."
+S Defines good code by correctness and changeability, names concrete habits, and knows when principles like DRY and YAGNI pull against each other.
+#SHEET Advanced coding principles
+Q Explain SOLID, with an example you've used.
+A SOLID is five principles for code that's easy to change. Single responsibility: a module has one reason to change. Open–closed: add behaviour by adding code, not editing working code. Liskov substitution: subtypes must honour the contract of the type they replace. Interface segregation: small, focused interfaces. Dependency inversion: depend on abstractions, so business logic doesn't know about the database or HTTP. The one I use most is dependency inversion: the order service takes a payment-gateway interface, so tests pass in a fake and production passes in Stripe. I apply them where change is likely, not everywhere.
+F Composition or inheritance? || Composition by default: it's more flexible and avoids fragile base classes. Inheritance only for a true "is-a" with a stable contract.
+F How do you make illegal states unrepresentable? || Model state as a discriminated union, so a paid order must have a payment ID and an exhaustive `switch` fails to compile when a case is missed.
+F Can SOLID be overdone? || Yes: interfaces with one implementation and layers of indirection make simple code hard to follow.
+W Recites the five names.
+S Explains each in a sentence, gives a real example of one, and knows when applying it would add needless complexity.
+#SHEET Production-grade code
+Q What makes code production-ready?
+A It behaves well when things go wrong, not just when they go right. Every external call has a timeout, and retries only for safe, idempotent operations, with backoff and jitter. Inputs are validated at the boundary, errors are handled and logged with context, and secrets come from a secrets manager, not code. The service exposes structured logs, metrics and traces, separate liveness and readiness checks, and shuts down gracefully, finishing in-flight requests. Configuration lives outside the code, database changes are backward-compatible, and it's tested and deployable with a quick rollback. My test is: what happens at 3am when a dependency is slow?
+F What's idempotency, and why does it matter? || Repeating a request has the same effect as doing it once, so retries after timeouts are safe; use idempotency keys for operations like payments.
+F Liveness or readiness? || Liveness says "restart me"; readiness says "don't send me traffic yet". Don't check dependencies in liveness, or one slow database restarts everything.
+F How do you change a database schema safely? || Expand, migrate, contract: add the new structure, move readers and writers over, then remove the old.
+W "It has tests and no bugs."
+S Covers failure handling, observability, configuration and secrets, graceful shutdown, safe migrations and rollback.
+#SHEET Basic engineering principles
+Q What does ownership mean to you as an engineer?
+A Caring about the outcome, not just the ticket. Before building, I make sure I understand the problem and what done looks like, and I ask clarifying questions early. While building, I keep changes small, communicate progress and risks before they become surprises, and ask for help once I've spent a reasonable time stuck, saying what I've tried. After shipping, I check it works in production, watch the metrics, and fix what I broke. If I see something wrong outside my area, I raise it with the right people rather than ignoring it.
+F Tell me about a time you raised a risk early. || Use a real story: what you noticed, who you told, the options you proposed, and what happened.
+F How do you estimate? || Break the work down, give a range rather than a single date, state assumptions, and update the estimate as you learn.
+F When do you ask for help? || After a time-box, with a short summary of the goal, what you've tried and where you're stuck.
+W "I finish my tickets on time."
+S Describes clarifying, communicating risk, asking for help well, and following the change into production.
+#SHEET Advanced engineering principles
+Q How do you balance new features against reliability and tech debt?
+A I make the trade-off explicit with data instead of arguing about it. We agree SLOs for what users care about, like successful checkouts and latency, and the error budget that leaves. While we're within budget, we ship features at full speed; when we're burning it too fast, reliability work takes priority until we're back on track. For tech debt, I estimate the cost of leaving it, such as incidents, slower delivery or onboarding pain, against the cost of fixing it, then fix the debt that blocks upcoming work first, and reserve a steady share of capacity for the rest. I explain it to product in terms of risk and delivery speed, not code quality.
+F What's a burn rate alert? || An alert on how fast the error budget is being used, such as "at this rate the monthly budget is gone in two days", rather than on raw error counts.
+F How do you influence without authority? || Bring data, write the proposal down, find allies early, and make the trade-off clear to decision-makers.
+F What is Conway's law? || Systems mirror the communication structure of the teams that build them, so team boundaries and service boundaries should be designed together.
+W "We do a tech-debt sprint every quarter."
+S Uses SLOs and error budgets to decide, quantifies debt by its cost, and communicates in business terms.
+#SHEET Basic design principles
+Q Explain hexagonal architecture, and why you'd use it.
+A Hexagonal architecture, or ports and adapters, puts the business logic at the centre and keeps technology at the edges. The core defines ports: interfaces for what it needs, like 'save an order' or 'charge a card'. Adapters implement them: a PostgreSQL repository, a Stripe client, an HTTP controller. Dependencies point inwards, so the core knows nothing about frameworks or databases. That gives high cohesion and low coupling: I can test the business rules with in-memory fakes, and swap Stripe for another provider by writing one adapter. For a small CRUD service it can be overkill, so I scale it to the complexity of the domain.
+F What are cohesion and coupling? || Cohesion is how closely related the things inside a module are; coupling is how much modules depend on each other. Aim for high cohesion and low coupling.
+F How do you organise code? || By feature or domain (`orders/`, `payments/`), not by technical layer, so related code changes together.
+F Which design patterns do you actually use? || Strategy, adapter, factory and repository, named with a real example each.
+W "It has layers for the controller, service and database."
+S Explains ports, adapters and inward dependencies, the testing and swapping benefits, and when it's too much.
+#SHEET Advanced design principles
+Q What is a bounded context, and how does it shape a design?
+A A bounded context is a part of the business where a model and its language have one consistent meaning. 'Order' in fulfilment is about items and shipping; in billing it's about invoices and payments. Rather than one giant shared model, each context owns its model and data, and contexts talk through explicit contracts: APIs or events. Inside a context, aggregates like Order enforce their own rules in a single transaction; across contexts, we accept eventual consistency, using patterns like the transactional outbox. Bounded contexts are usually the best guide to module boundaries in a monolith, and to service boundaries if we later split it.
+F Monolith or microservices? || Start with a modular monolith along bounded contexts; split only where independent deployment or scaling earns the cost.
+F How do you keep consistency across services? || Strong consistency within an aggregate, eventual consistency between them, with sagas, the outbox pattern and idempotent consumers.
+F How would you migrate away from a legacy system? || The strangler fig: put a facade in front, move one capability at a time, and retire the old parts as traffic moves.
+W "It's a microservice."
+S Explains models with their own language and data, aggregates and consistency boundaries, and how contexts guide module and service splits.
+#SHEET Frameworks
+Q How would you review a system's architecture?
+A I use a few frameworks as checklists rather than inventing my own. First I'd draw it with the C4 model, a context diagram and then containers, so everyone agrees what exists. Then I'd walk the Well-Architected pillars: operational excellence, security, reliability, performance, cost and sustainability, asking for evidence on each, like SLOs, recovery tests and cost per transaction. I'd run a quick STRIDE threat model on the main data flows, and check the twelve-factor basics, such as configuration in the environment and stateless processes. To see how well the team delivers, I'd look at the DORA metrics. Findings become prioritised actions, and significant decisions get ADRs.
+F What are the DORA metrics? || Deployment frequency, lead time for changes, change failure rate, failed deployment recovery time and deployment rework rate.
+F How do you document a decision? || An ADR: context, decision, consequences, kept in the repository and never edited after acceptance, only superseded.
+F How do you answer behavioural questions? || STAR: situation, task, action and result, with the focus on your actions and a measurable result.
+W "I'd look at the code and see if it's good."
+S Uses C4, Well-Architected, STRIDE and DORA as structured lenses, asks for evidence, and turns findings into tracked actions and ADRs.

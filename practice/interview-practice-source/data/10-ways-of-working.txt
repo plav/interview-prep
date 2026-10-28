@@ -1,0 +1,16 @@
+#DOC Ways of Working
+#SHEET Agile
+Q How does your team work?
+A We run two-week sprints with a sprint goal, but we keep work-in-progress limits on the board, because finishing beats starting. Stories are sliced vertically so each one is deployable, and the definition of done includes tests, review, deployment behind a flag where needed, and monitoring. We forecast from our own throughput as a range rather than promising dates, reserve about a fifth of capacity for technical work, and each retro produces one or two owned actions we check next time.
+W "We do Scrum: stand-ups, sprints and retros."
+S Explains how the practices produce feedback and flow: WIP limits, vertical slices, done meaning deployed, data-based forecasts, and owned improvements.
+#SHEET Jira
+Q How do you keep a team's Jira useful?
+A Keep the workflow to a handful of statuses that match how work really moves, and only a few required fields. Tickets carry the why and clear acceptance criteria, so they can be picked up without a meeting. The issue key goes into branch names, so PRs and deployments show up on the ticket automatically, and automation moves tickets on merge. We prune the backlog regularly, and use cycle time and work-item age from the board to spot stuck work.
+W "I update my tickets."
+S Designs a lean workflow, writes actionable tickets, links code to work automatically, and uses flow data to find blockers.
+#SHEET AI-assisted development
+Q How do you use AI tools in your work?
+A Daily, but with discipline. For well-defined tasks, like tests, boilerplate, refactors and unfamiliar APIs, I use an agentic tool: I give it a clear spec or failing tests and the project's conventions, ask for a plan first on anything bigger, and have it run the tests and type checks. I work in small, committed steps, and I review everything as if a new colleague wrote it, checking for invented APIs, missing error handling, security gaps and tests that don't really test. For deep design work in complex code, I lean on it more for explanation than generation. The research is mixed, so I judge it by outcomes: fewer defects and faster delivery, not more lines.
+W "It writes most of my code now."
+S Uses AI deliberately with specs, tests and small steps, owns review and security, and judges it by delivery outcomes, citing the evidence honestly.

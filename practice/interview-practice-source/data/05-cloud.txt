@@ -1,0 +1,187 @@
+#DOC Cloud and Infrastructure
+#SHEET Networking and HTTP
+Q What happens when you type a URL and press Enter?
+A First the browser resolves the domain name through DNS, using cached answers where it can, to get an IP address. It opens a connection, a TCP handshake plus a TLS handshake (or one QUIC handshake for HTTP/3), where the server proves its identity with a certificate. Then it sends the HTTP request. In a typical setup that goes through a CDN, which may answer from cache, then a load balancer, which picks a healthy instance, then the app, which might call a database or cache, and the response comes back the same way. The browser then parses the HTML and fetches the CSS, JavaScript and images, reusing the connection.
+F Why does HTTP/3 use UDP? || TCP delivers one ordered byte stream, so a lost packet stalls everything behind it. QUIC rebuilds reliability per stream on top of UDP, sets up connections faster, and survives network changes.
+F Layer 4 or layer 7 load balancer? || Layer 4 spreads TCP connections without reading them: fast and protocol-agnostic. Layer 7 reads HTTP, so it can route by path or host, terminate TLS and check health over HTTP.
+F How does TLS prove who the server is? || The server presents a certificate for that domain, signed by a certificate authority the client trusts. The handshake proves the server holds the matching private key.
+F 502 or 504? || A 502 means the proxy got a bad or no response from upstream (often a closed connection). A 504 means the upstream didn't answer within the proxy's timeout.
+W "DNS finds the server, then it sends the request and gets the page back."
+S Names each step in order (DNS, TCP, TLS, HTTP), says what each one is for, and mentions the real infrastructure in the path: CDN, load balancer, app, database.
+W Stops at the answer.
+S Offers to go deeper: "I can go into the TLS handshake or how the load balancer chooses a target if that's useful."
+Q We're seeing intermittent 502s. How would you investigate?
+A Intermittent 502s usually mean a proxy got a broken response from upstream, not that the app is down. I'd check the load balancer logs for which targets and how often, then look for a keep-alive mismatch, where the backend closes idle connections before the load balancer does. That's very common with Node's 5-second default behind an ALB's 60 seconds. I'd also check whether the 502s line up with deploys, which would point to connection draining and graceful shutdown.
+#SHEET Docker fundamentals
+Q What's the difference between a container and a virtual machine?
+A A virtual machine runs a whole guest operating system on a hypervisor, so it's heavy but strongly isolated. A container is just a process on the host, isolated by Linux namespaces, which control what it can see, and cgroups, which control how much CPU and memory it can use. It shares the host kernel, so it starts in milliseconds and the image is megabytes rather than gigabytes. The trade-off is a weaker security boundary, which is why untrusted workloads sometimes run in micro-VMs such as Firecracker, the technology behind Lambda and Fargate.
+F What is an image layer, and why does Dockerfile order matter? || Each `RUN` or `COPY` creates a cached layer, and a change invalidates that layer and every one after it. So copy the dependency manifests and install first, and copy source code last.
+F Why use a multi-stage build? || To build with full tooling, then ship only the runtime and the compiled output. The image is smaller, the attack surface is smaller, and no compilers or dev dependencies reach production.
+F `CMD` or `ENTRYPOINT`? || `ENTRYPOINT` is the fixed executable; `CMD` gives default arguments, or the default command if there's no entrypoint. Use the JSON form so your process receives signals directly.
+F How do containers talk to each other? || On a user-defined network, by service name through Docker's built-in DNS. In Kubernetes, through Services.
+W "Containers are lightweight VMs."
+S "Containers aren't VMs. They're isolated processes sharing the host kernel, using namespaces and cgroups." That one correction signals real understanding.
+W "Docker makes it work everywhere."
+S Explains why: the image bundles the runtime and dependencies, with the start command fixed. Then names the limits: CPU architecture still matters, and config and secrets come from the environment.
+#SHEET Docker in production
+Q How would you make a container image production-ready?
+A I'd use a multi-stage build so only the runtime and compiled code ship, on a slim or distroless base pinned by digest. The container runs as a non-root user with a read-only filesystem and no extra capabilities, and secrets are injected at runtime, never baked in. The start command uses exec form so the app gets SIGTERM and shuts down gracefully. In CI, every image is scanned, gets an SBOM and is signed, and we rebuild on a schedule so base-image patches actually reach production.
+F Why does running as root matter if the app is in a container? || Containers share the host kernel, so root inside plus a kernel or runtime vulnerability can mean root on the host. Non-root, dropped capabilities and a read-only filesystem limit the damage from any compromise.
+F What happens when ECS or Kubernetes stops your container? || It sends SIGTERM, waits for the grace period (30 seconds by default), then sends SIGKILL. The app should stop accepting new work, finish in-flight requests, close connections and exit. Shell-form `CMD` or a PID 1 with no handler breaks this.
+F How do you handle vulnerabilities in base images? || Minimal base images reduce them. Scanning in CI gates fixable critical and high issues. Renovate or Dependabot proposes base-image updates, and scheduled rebuilds pick up patches. When a big CVE drops, SBOMs show which images are affected.
+F Alpine or distroless? || Alpine is small but uses musl, which can break native modules. Distroless keeps glibc but removes the shell and package manager: fewer CVEs, harder to debug. Slim Debian is the pragmatic middle ground.
+W "Use a small image and scan it."
+S Covers the whole life cycle: build (multi-stage, pinned), run (non-root, read-only, signals), ship (scan, SBOM, sign) and maintain (scheduled rebuilds).
+W Lists tools: "Trivy, cosign, distroless."
+S Explains what each one prevents, backed by a real story from your own work, for example: "We had pods taking 30 seconds to stop on every deploy. It was a shell-form CMD swallowing SIGTERM."
+#SHEET Kubernetes: core objects
+Q What happens when you run `kubectl apply` on a Deployment?
+A kubectl sends the manifest to the API server, which authenticates and authorises the request, runs admission checks, and stores the desired state in etcd. The Deployment controller notices the change and creates or updates a ReplicaSet, which creates Pod objects. The scheduler sees pods without a node and assigns each one, based on resource requests and constraints. The kubelet on that node sees its new pod, pulls the image and starts the containers through the container runtime. Once the readiness probe passes, the pod joins the Service's endpoints and starts receiving traffic. Each component just watches the API server and reconciles towards the desired state.
+F Deployment or StatefulSet? || Deployment pods are interchangeable and disposable. StatefulSet pods have stable names, stable storage and ordered start-up, which suits clustered databases. Prefer a managed database over running one in Kubernetes.
+F How does a Service route traffic? || It has a stable virtual IP and DNS name. kube-proxy (iptables or IPVS rules) or an eBPF data plane such as Cilium forwards connections to the current ready pod IPs, which are tracked in EndpointSlices.
+F Ingress or Gateway API? || Ingress is frozen and relies on vendor annotations, and the most popular controller, ingress-nginx, was retired in March 2026. Gateway API splits ownership between platform and app teams, and supports richer routing natively. It's the default for new work.
+F How are Secrets protected? || By default they're only base64-encoded in etcd. You add encryption at rest (KMS), tight RBAC, and ideally an external source of truth synced in by the External Secrets Operator.
+W "Kubernetes creates the pods."
+S Names each actor (API server, etcd, controllers, scheduler, kubelet) and frames them all as one idea: watch the desired state and reconcile towards it.
+W Describes features.
+S Connects them to operations: readiness gates traffic, labels wire Services to pods, nothing should change by hand.
+#SHEET Kubernetes: scheduling and resources
+Q How do you size and scale a service on Kubernetes?
+A I start with resource requests based on measured usage, because the scheduler places pods by requests and the autoscaler computes utilisation from them. I set memory request equal to limit, since memory can't be reclaimed without killing the pod, and I usually skip CPU limits to avoid throttling. For health, a startup probe for slow boots, a readiness probe that gates traffic, and a shallow liveness probe that never checks dependencies. For scale, an HPA on CPU or, better, a leading metric like queue depth, Karpenter adding nodes when pods can't fit, and a disruption budget plus zone spreading so upgrades and zone failures don't take everything down.
+F Requests or limits? || Requests are the guaranteed share, used for scheduling. Limits are the ceiling. Exceeding a CPU limit means throttling; exceeding a memory limit means an OOM kill.
+F Liveness or readiness? || Readiness failing takes the pod out of the load balancer temporarily. Liveness failing restarts it. Put dependency checks in readiness, if anywhere, never in liveness.
+F Why do you get errors during deployments, and how do you fix them? || Endpoint removal and SIGTERM happen at the same time, so pods receive traffic while shutting down. Add a `preStop` sleep, handle SIGTERM gracefully, and make the grace period longer than both.
+F HPA, VPA or cluster autoscaling? || The HPA changes how many pods run, the VPA changes how big each pod is, and the cluster autoscaler or Karpenter changes how many nodes there are. Typically you'd use the HPA plus Karpenter, with the VPA in recommendation mode to tune requests.
+W "Set CPU and memory limits and add autoscaling."
+S Explains why each setting exists (scheduling, OOM, throttling) and the order in which the scaling layers react.
+W Treats probes as a checkbox.
+S Knows the failure modes: liveness probes causing cascading restarts, and the shutdown race that causes 502s on every deploy.
+#SHEET Kubernetes: deploying
+Q How do you deploy to Kubernetes safely?
+A CI builds an immutable image tagged with the commit SHA, scans and signs it, then updates the tag in a deployment-config repo, through a reviewed pull request for production. Argo CD pulls that repo and syncs the cluster, so Git is the audit trail and rollback is a revert, and CI never holds cluster credentials. The rollout itself is gradual: rolling updates with readiness gates for most services, and a canary with automated metric checks for risky user-facing changes. Database changes are backwards compatible, because old and new versions run side by side during the rollout. Secrets come from Secrets Manager through the External Secrets Operator, never from Git.
+F Helm or Kustomize? || Helm for packaging and third-party software, with templating and release history. Kustomize for patching plain YAML per environment, with no templating language. Many teams use both, and Argo CD renders either.
+F What does GitOps give you over a CI pipeline running kubectl? || Drift detection and self-healing, no cluster credentials in CI, rollback by `git revert`, and a reviewed, auditable history of every change.
+F Blue/green or canary? || Blue/green switches everyone at once, with an instant switch back, but needs double capacity. A canary exposes a small share of users first and promotes on healthy metrics, which limits the blast radius. It needs good metrics and automation.
+F How do you handle a schema change in a rolling deploy? || Expand and contract: add new columns or tables in a compatible way, deploy code that handles both, backfill, then remove the old structures in a later release.
+W "We use a pipeline that runs `kubectl apply`."
+S Describes the whole chain: immutable artifacts, GitOps, gradual rollout, automated rollback, secrets handling.
+W Ignores data.
+S Names the hard part: two versions running at once, so migrations must be backwards compatible.
+#SHEET Kubernetes: operating and debugging
+Q A pod is in CrashLoopBackOff. Walk me through how you'd debug it.
+A CrashLoopBackOff means the container keeps starting and exiting, so first I find out why it exits. `kubectl describe pod` gives me the exit code and recent events: 137 points to an OOM kill, 1 to an application error. Then `kubectl logs --previous`, because the current container has only just restarted. The usual causes are missing configuration or secrets, a dependency it can't reach at start-up, a bad command, or a liveness probe killing a slow-starting app. If I need to look inside a distroless image, I attach an ephemeral container with `kubectl debug` and test DNS and connectivity. Then I fix it in Git, not with `kubectl edit`.
+F The pod is Running but gets no traffic. Why? || Either readiness is failing, so it isn't in the endpoints, or the Service's selector or `targetPort` doesn't match. Check `get endpointslices`, then network policies.
+F How do you give a pod AWS permissions on EKS? || EKS Pod Identity, or IRSA, maps the pod's ServiceAccount to a narrowly scoped IAM role. Never static keys, and never the node's role.
+F How do you upgrade an EKS cluster? || One minor version at a time: check for deprecated APIs, upgrade the control plane, then add-ons, then nodes (Karpenter or node groups roll them), watching PDBs and workload health throughout.
+F How do you lock down a namespace? || The restricted Pod Security Standard, a default-deny network policy with explicit allows, least-privilege RBAC with no secret access for humans by default, and secrets sourced from a manager.
+W "I'd check the logs and restart it."
+S Follows a method (state, events, previous logs, endpoints, connectivity) and reads the exit code to narrow the cause quickly.
+W Fixes with `kubectl edit` or `delete --force`.
+S Fixes through Git, keeps the evidence, and asks why it happened: missing resource requests, a bad probe, a config gap that CI should have caught.
+#SHEET AWS: accounts and IAM
+Q How would you set up AWS accounts and access for a new product?
+A I'd use AWS Organizations with separate accounts for production, staging, security tooling and log archive, so a breach or a mistake in one can't reach the others. People sign in through IAM Identity Center with SSO and short-lived credentials, with permission sets mapped to groups. Workloads get one IAM role each, scoped to exactly the resources they use, and CI deploys through OIDC, so there are no long-lived keys anywhere. On top, SCPs enforce guardrails no one can override, such as allowed regions and protected CloudTrail, and RCPs keep our data inside the organisation. CloudTrail from every account goes to the locked-down log account.
+F Role or user? || Roles have no permanent credentials; STS issues temporary ones when the role is assumed. Users have long-lived passwords or keys that can leak, so they're for legacy cases only.
+F How does AWS decide whether a request is allowed? || An explicit deny anywhere wins. Otherwise, organisation policies must allow it, an identity or resource policy must grant it, and boundaries must permit it. If nothing grants it, it's denied by default.
+F SCP or permissions boundary? || An SCP caps every principal in the accounts it's attached to, organisation-wide. A boundary caps one specific role or user. Neither grants permissions.
+F How do you give GitHub Actions access to AWS? || An OIDC identity provider in IAM, and a role whose trust policy only accepts tokens for a specific repository and branch or environment. No stored keys.
+W "Create IAM users with the right permissions."
+S Uses roles everywhere, SSO for people and OIDC for CI, with accounts as blast-radius boundaries.
+W Talks only about permissions.
+S Adds the layers that stop mistakes from becoming incidents: SCP guardrails, an RCP data perimeter, and CloudTrail to a locked account.
+#SHEET AWS: networking
+Q Design the network for a web service on AWS.
+A One VPC per environment with a non-overlapping range, spread over at least two availability zones. In each zone, a small public subnet holds only the load balancer and the NAT gateway; a large private subnet holds the app, sized for EKS if we use it; and an isolated subnet holds the database with no internet route. Security groups chain by reference: the ALB accepts 443 from the internet, the app accepts traffic only from the ALB, and the database only from the app. I'd add gateway endpoints for S3 and DynamoDB, plus interface endpoints for heavy AWS traffic like ECR, to cut NAT costs. In front sit Route 53 and CloudFront with WAF, and Flow Logs are on for troubleshooting.
+F Security group or network ACL? || Security groups are stateful, attach to resources, and can reference other groups; they're the main tool. ACLs are stateless subnet-level rules for coarse extra blocking.
+F How does a private instance reach the internet? || Its subnet's route table sends `0.0.0.0/0` to a NAT gateway in a public subnet, which forwards to the internet gateway. Outbound only.
+F How would you connect 20 VPCs? || Transit Gateway as a hub, or PrivateLink or VPC Lattice if teams only need to expose specific services rather than whole networks. Peering doesn't scale, because it isn't transitive.
+F Why is our networking bill so high? || Usually NAT data processing, especially container image pulls and S3 traffic, plus traffic between zones and public IPv4 addresses. Fix it with endpoints, zone-aware routing, and fewer public IPs.
+W "Put the servers in a VPC with a security group."
+S Lays out the tiers (public, private, isolated) across zones, the security-group chain, and how traffic enters and leaves.
+W Ignores cost and growth.
+S Plans CIDRs for future connectivity, sizes subnets for pods, and designs out NAT costs with endpoints.
+#SHEET AWS: compute
+Q How do you choose between EC2, ECS, EKS and Lambda?
+A I start from the workload and the team. For containerised APIs and workers, my default is ECS on Fargate: no servers or cluster to run, and it handles most needs. I'd choose EKS when there are many services, a platform team to own it, or a real need for the Kubernetes ecosystem or portability. Lambda fits event-driven pieces such as queue consumers, S3 triggers, schedules and spiky low-traffic APIs, where scaling to zero and per-request billing win. Its 15-minute limit, cold starts and cost at steady high load are the trade-offs. EC2 directly is for special hardware, licensing or legacy software. Many systems mix two or three of these.
+F How do you reduce Lambda cold starts? || Smaller packages, initialisation outside the handler, SnapStart for Java, Python, .NET and container images, provisioned concurrency for latency-critical paths, and more memory, which also brings more CPU.
+F What happens when a Spot instance is reclaimed? || You get a two-minute warning. Stateless workloads drain and get rescheduled on replacement capacity, which is why Spot suits stateless and batch work.
+F How do you cut compute cost? || Right-size from real usage, move to Graviton, buy Savings Plans for the steady baseline, use Spot for interruptible work, and scale to zero outside working hours in non-production.
+F What's new in Lambda? || Managed Instances run functions on EC2 capacity with multi-request environments and larger limits, and durable functions checkpoint long multi-step workflows for up to a year.
+W "Lambda is cheaper because it's serverless."
+S Knows the crossover: per-request pricing wins for spiky traffic, while containers or Savings Plans win at steady high load.
+W Picks one tool for everything.
+S Matches tools to workloads, and names the operational cost of each, especially EKS's platform overhead.
+#SHEET AWS: data and storage
+Q How do you choose a database on AWS?
+A I start from the access patterns and consistency needs. For relational data with joins and transactions, which is most business data, I default to Aurora or RDS PostgreSQL, with Aurora when I need fast failover, many read replicas or serverless scaling. If the access patterns are known, simple and need to scale massively, like sessions, carts or high-volume lookups by key, DynamoDB fits, with keys designed from those patterns. ElastiCache with Valkey sits in front for hot reads, and S3 holds files and the data lake. Then I make it production-safe: Multi-AZ, point-in-time recovery, backups copied to a separate account, encryption, and restores tested against our RPO and RTO.
+F DynamoDB or Aurora? || DynamoDB gives predictable low latency at any scale, but you must know your queries up front, and there are no joins. Aurora gives flexible SQL and transactions, but scaling writes beyond one primary is harder. Aurora DSQL now covers distributed SQL when you truly need it.
+F What are RPO and RTO? || RPO is how much data you can lose; RTO is how long you can be down. They decide between backup and restore, pilot light, warm standby and active-active.
+F How do you let users upload files safely? || A pre-signed S3 URL, limited in time and size, generated by the API. The browser uploads straight to S3, and an S3 event triggers processing.
+F Read replica or cache? || Replicas scale SQL reads with slightly stale data and no code changes beyond routing. A cache is faster still, but needs invalidation logic. Use them for different problems.
+W "DynamoDB because it scales."
+S Chooses by access pattern and consistency, and names the trade-offs: no joins, keys designed up front.
+W Stops at choosing the database.
+S Covers operating it: Multi-AZ, point-in-time recovery, isolated backups, tested restores, connection pooling.
+#SHEET AWS: integration
+Q When would you use SQS, SNS, EventBridge or Step Functions?
+A SQS when work needs buffering and one consumer should process each message, like background jobs or smoothing spikes. SNS or EventBridge when one event has several interested consumers. I prefer EventBridge for domain events, because rules route on content and other teams can subscribe without changing my code. Usually each consumer gets its own SQS queue behind the rule, so it retries independently, with a dead-letter queue. Step Functions when there's an actual process with ordered steps, retries and compensation, like reserve stock, charge, then confirm or release. Kinesis or Kafka when I need high volume, ordering per key, or replay. Whatever the service, consumers must be idempotent, because delivery is at least once.
+F Queue or topic? || A queue delivers each message to one consumer, for work distribution. A topic or bus delivers a copy to every subscriber, for notification and fan-out.
+F How do you handle a message that always fails? || After a set number of receives it goes to a dead-letter queue. Alert on DLQ depth, investigate, fix, then redrive it to the source queue.
+F How do you guarantee an event is published when the database write succeeds? || The outbox pattern: write the event to an outbox table in the same transaction, then relay it, or stream the change from the table with DynamoDB Streams or Pipes.
+F Choreography or orchestration? || Choreography means services react to each other's events: loosely coupled, but the flow is hard to see. Orchestration means a coordinator (Step Functions) drives the steps: easier to see and change, but more central.
+W "SQS is a queue and SNS is for notifications."
+S Chooses by delivery model (one consumer, many consumers, ordered stream, workflow) and pairs services deliberately, such as EventBridge to SQS per consumer.
+W Assumes messages arrive once and in order.
+S Designs for at-least-once delivery and reordering: idempotency, DLQs, the outbox pattern, trace IDs.
+#SHEET AWS: operations, security and cost
+Q What would you put in place on day one of a new AWS environment?
+A For audit, an organisation-wide CloudTrail into a locked log-archive account, and AWS Config recording everything. For security, GuardDuty, Inspector and Security Hub enabled across all accounts and regions from a delegated admin account, KMS encryption by default, secrets in Secrets Manager, and WAF on anything public. For observability, structured logs with retention set, metrics and alarms on user-facing symptoms like errors and latency, and tracing. For cost, mandatory tags, budgets and anomaly detection per team, and a monthly review using Cost Optimization Hub, then Savings Plans once the baseline is stable. All of it defined in infrastructure code, so every new account gets it automatically.
+F Secrets Manager or Parameter Store? || Secrets Manager for credentials that need rotation and cross-account sharing; it costs per secret. Parameter Store is cheaper or free, for configuration and simple secrets without built-in rotation.
+F How do you investigate a suspected credential leak? || Disable or rotate the credential, check CloudTrail for what it was used for and from where, check GuardDuty findings, contain any resources created, then write up the root cause and fix the path that leaked it.
+F Our AWS bill jumped 40%. Where do you start? || Cost Explorer grouped by service, then by usage type and tags, to find what changed and when. Check anomaly alerts, data transfer and NAT, new resources, and log volume. Then fix and put guardrails in place.
+F CloudTrail or CloudWatch? || CloudTrail records who called which AWS API, for audit and security. CloudWatch holds your application's and services' metrics and logs, for operations.
+W "Turn on CloudWatch and GuardDuty."
+S Covers all three areas (audit, security, cost) across every account and region, centrally managed, and enforced through infrastructure code.
+W Treats cost as finance's problem.
+S Makes cost an engineering metric: tags, per-team budgets, anomaly alerts, and rightsizing before committing.
+#SHEET Basic cloud principles
+Q Explain the shared responsibility model.
+A The provider secures the cloud itself: data centres, hardware, the hypervisor and the managed parts of each service. The customer secures what they put in it: data, identities and permissions, network rules, application code and, depending on the service, the operating system. The split moves with the service model: on EC2 I patch the OS; on Fargate or Lambda the provider does; but IAM, data protection and configuration are always mine. In practice most cloud incidents are on the customer side, like public buckets or over-broad roles, which is why guardrails and least privilege matter so much.
+W "AWS handles security."
+S Explains how the split shifts between IaaS, containers and serverless, and what always stays with the customer.
+#SHEET Advanced cloud principles
+Q How would you make a service highly available?
+A First I'd agree the target with the business, an SLO plus RTO and RPO, because each extra nine costs more. For most services: stateless instances spread across at least three availability zones behind a load balancer, with enough capacity in each zone to lose one without scaling up, which is static stability. A managed multi-AZ database with point-in-time recovery. Timeouts, retries with backoff, circuit breakers and bulkheads around dependencies, and load shedding when overloaded. Backups copied to another region. I'd go multi-region only if the business case justifies the complexity, and then I'd test failover regularly.
+W "Put it in multiple regions."
+S Starts from the required availability and recovery targets, and layers zone redundancy, resilience patterns and tested recovery to match.
+#SHEET Terraform: commands and syntax
+Q `count` or `for_each`? And how do you rename a resource without recreating it?
+A I use `for_each` with a map or set keyed by stable names for anything that's a collection, because each instance is addressed by its key: removing one item doesn't affect the others. With `count`, removing an item shifts the indexes and can recreate resources. I keep `count` for conditional creation, zero or one. To rename or restructure, I add a `moved` block from the old address to the new one, so the plan shows a move rather than a destroy and recreate. It's reviewed in the pull request like any other change. Similarly, I use `import` blocks to adopt existing resources, and `removed` blocks to stop managing one without deleting it.
+W "I use `terraform state mv`."
+S Uses `moved` blocks, so refactoring is reviewable and repeatable in every environment.
+#SHEET Basic Terraform principles
+Q What is Terraform state, and why does it matter?
+A State is Terraform's record of which real resources it manages, mapping each address in the code to a real ID with its last-known attributes. On every plan Terraform compares the code, the state and what actually exists, to work out the changes. Because it's shared and contains sensitive values, it lives in a remote, encrypted, versioned backend with locking, like S3 with native lock files, and only the pipeline can write to it. I keep states small, split per environment and component, so plans are fast and a mistake can't touch everything. And I never edit state by hand: refactors go through `moved`, `import` and `removed` blocks in code.
+F What's drift? || Differences between state and reality, from manual changes or other tools. A plan shows it; fix it by updating the code or reverting the change.
+F What does "forces replacement" mean? || That attribute can't be changed in place, so Terraform will destroy and recreate the resource. It's dangerous for anything stateful.
+F Terraform or CloudFormation? || Terraform is multi-cloud and multi-service, with a large provider ecosystem; CloudFormation is AWS-native, with no state file to manage. Both are declarative.
+W "State is a file Terraform uses."
+S Explains what it maps, why it's sensitive, how it's stored and locked, and how state size affects blast radius.
+#SHEET Advanced Terraform principles
+Q How would you structure Terraform for a team with several environments?
+A Reusable, versioned modules, with small root modules per environment and component: prod network, prod data, prod app, and the same for staging. Each has its own remote state in S3 with native locking, and its own pipeline role. Environments differ only in variables, and changes are promoted by applying the same module version to staging and then prod. Every pull request runs fmt, validate, TFLint, Checkov and `terraform test`, and posts the plan; merging applies exactly that plan through GitHub Actions with OIDC. Refactors use `moved` and `import` blocks, secrets stay out of state with write-only arguments, and a nightly plan detects drift.
+F Why not workspaces? || They share a backend and credentials, so dev and prod aren't isolated, and applying to the wrong one is easy. They're fine for short-lived copies.
+F How do you test Terraform? || Static checks and policy-as-code on every PR, `terraform test` with mock providers for module logic, and occasional real applies in a sandbox account.
+F Terraform or OpenTofu? || Same language and providers. OpenTofu is MPL-licensed under the Linux Foundation and has some features first, like state encryption; Terraform has HCP Terraform and Stacks. The licence and the platform usually decide.
+W "We run terraform apply from our laptops."
+S Uses a pipeline with reviewed saved plans, OIDC, scoped roles, policy checks and drift detection.
+#SHEET Azure
+Q You've used AWS. How would you get productive on Azure?
+A The concepts transfer; mainly the names and the organisation change. I'd map what I know: IAM roles become managed identities with RBAC, accounts become subscriptions under management groups, VPCs become VNets with NSGs, ECS maps to Container Apps, EKS to AKS, Lambda to Functions, SQS to Service Bus, DynamoDB to Cosmos DB, and CloudWatch to Azure Monitor with KQL. The biggest difference is resource groups as the unit of lifecycle and access, and Entra ID as the identity backbone. Terraform works on both, so my infrastructure-as-code habits carry over directly.
+W "I've only used AWS."
+S Maps the concepts confidently, and names the genuine differences: resource groups, scope inheritance, Entra ID, KQL.
+#SHEET Linux
+Q A Linux server is slow. What do you check?
+A I go through the resources systematically rather than guessing. `uptime` for load against the CPU count; `free -h` for available memory and swapping; `vmstat 1` for the run queue, I/O wait and swap activity; `ps` or `top` sorted by CPU and memory for the culprit process; `df -h` and `df -i` for full disks or inodes; `iostat` for disk saturation; `ss` for connection build-up; and `journalctl` and `dmesg` for errors like the OOM killer. That's the USE method: utilisation, saturation and errors for each resource. Once I've found the constrained resource, I look at why, and fix it in code or infrastructure, not just on that box.
+W "I'd restart it."
+S Checks CPU, memory, disk, network and errors in a fixed order, finds the constraint, then fixes the cause durably.

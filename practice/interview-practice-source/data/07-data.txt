@@ -1,0 +1,48 @@
+#DOC Data
+#SHEET SQL
+Q A query that used to be fast is now slow. What do you do?
+A I'd get the actual plan with EXPLAIN ANALYZE, on production-like data, and compare the estimated rows with the actual rows. The usual causes are a sequential scan because an index is missing or can't be used, perhaps because of a function on the column or a type mismatch; stale statistics after the data grew, so the planner picks a bad join; or an index whose column order doesn't match the filter and sort. Then I'd fix the specific cause, usually a composite index with the equality columns first and the sort column after, created concurrently so writes aren't blocked, and confirm the improvement in the plan and in production latency. If it's lock contention rather than the plan, I'd look at long-running transactions instead.
+F What's a window function? || A calculation across related rows that keeps each row, like ranking a customer's orders or a running total, unlike `GROUP BY`, which collapses rows into one.
+F What's the difference between isolation levels? || They decide which anomalies concurrent transactions can see. PostgreSQL defaults to read committed; serializable prevents all anomalies, at the cost of retries.
+F How do you prevent two users buying the last item? || An atomic conditional update (`qty = qty - 1 WHERE qty > 0`, then check the row count), or a row lock, or optimistic locking with a version column.
+F SQL or NoSQL? || SQL for relational data with flexible queries and transactions, which is most business data. NoSQL like DynamoDB when the access patterns are known and need predictable latency at very large scale.
+W "I'd add an index."
+S Reads the plan first, identifies why the planner chose it, and picks an index whose column order fits the query.
+W Treats the database as a dumb store.
+S Uses constraints, transactions and the right isolation for correctness, and plans migrations that don't lock production.
+#SHEET NoSQL and DynamoDB data modelling
+Q How would you model this in DynamoDB, and why would you choose it over PostgreSQL?
+A I'd start by listing every access pattern, with its parameters, volume and sort order, because in DynamoDB you design keys around the queries rather than the entities. Then I'd choose a partition key with high cardinality that groups items read together, and a sort key that orders and filters them, like `CUSTOMER#id` with `ORDER#date#id`, so 'latest orders for a customer' is one Query. Patterns the main key can't serve get a GSI, sparse where it's a subset like unshipped orders. I'd check that every pattern is a GetItem or a Query, never a Scan, and that no key gets hot traffic. I'd choose DynamoDB when the patterns are known and we need predictable low latency at large scale; if queries are still changing or need joins and reporting, PostgreSQL fits better.
+F What's a hot partition, and how do you avoid it? || One key value getting a disproportionate share of traffic, which caps throughput at one partition's limit. Use high-cardinality keys, add a shard suffix, or cache hot reads.
+F GSI or LSI? || GSIs have their own partition and sort key, can be added any time, and are eventually consistent. LSIs share the partition key, must be created with the table, and are rarely needed.
+F How do you query by an attribute that isn't in a key? || Add a GSI for it, or, if it's rare and the data is small, filter after a Query. Never a Scan in a hot path.
+F Single-table design: yes or no? || Yes when related items need fetching together in one request; separate tables when entities are accessed independently and readability matters more.
+W "DynamoDB scales, so use it."
+S Starts from access patterns, explains the key design, and names the trade-off: no joins, and patterns fixed up front.
+W Designs tables per entity, then filters with Scans.
+S Maps every pattern to a GetItem or Query, uses sparse GSIs, and checks for hot keys and item-collection growth.
+#SHEET Data fundamentals
+Q How would you get our application data into a form the business can analyse?
+A I'd keep analytics off the production database. I'd stream changes out with change data capture, or batch exports for less critical tables, and land them raw in S3 as the source for replay. Then I'd transform them with dbt, ELT-style, into cleaned tables and then a dimensional model: fact tables at a clear grain, such as one row per order line, with customer, product and date dimensions, stored as Iceberg tables queryable from Athena, or loaded into a warehouse if the team prefers. Pipelines are idempotent and incremental, orchestrated with retries, and every model has tests for uniqueness, nulls and freshness, with alerts. Personal data is masked or minimised, with clear owners in a catalog.
+W "Point the BI tool at the database."
+S Separates workloads, designs layered pipelines and a dimensional model, and builds in quality checks and governance.
+#SHEET Dealing with big data
+Q Queries on our event data in S3 are slow and expensive. What would you do?
+A First I'd check the format and layout, because that's usually the cause. If it's CSV or JSON, I'd convert it to Parquet, which is columnar and compressed, so queries read only the columns they use, often a hundredth of the bytes. I'd partition by the column most queries filter on, usually date, so they prune whole folders, and fix any small-files problem by compacting into files of a few hundred megabytes. I'd manage it as an Iceberg table, for safe updates, schema evolution and compaction. Then I'd check the queries themselves: selecting only needed columns and filtering on the partition column. And I'd measure bytes scanned before and after.
+W "Add a bigger cluster."
+S Reduces bytes read through format, partitioning, compaction and pruning, and measures the improvement.
+#SHEET Athena
+Q How do you keep Athena fast and cheap?
+A Athena charges $5 per terabyte scanned, so everything is about reading less. Data in Parquet with compression; partitioned by the columns queries filter on, usually date, using partition projection so partitions never go missing; files compacted to a few hundred megabytes; and queries selecting only the columns they need and always filtering on partitions. Workgroups enforce per-query scan limits and separate teams' costs. For tables that change, I use Iceberg for merges, deletes and compaction, keeping them on format v2 for now, because Athena can't yet read v3. If usage becomes heavy and constant, I'd compare capacity reservations or a warehouse.
+W "Athena is serverless, so it's cheap."
+S Explains the per-byte pricing, and the specific techniques that cut bytes scanned, plus guardrails.
+#SHEET AWS Clean Rooms
+Q How would you measure a partner campaign without sharing customer data?
+A I'd use a data clean room such as AWS Clean Rooms. Each side keeps its data in its own account and configures only the needed columns, joined on consistently hashed identifiers. We'd attach aggregation analysis rules with minimum thresholds, so results only ever come out as counts and sums for groups large enough not to identify anyone, and only the agreed party receives results. For extra protection I'd enable differential privacy, with a privacy budget. Every query is logged for audit. And alongside the technical controls we'd have a data-sharing agreement and a clear lawful basis under GDPR.
+W "We'd send them a hashed file."
+S Uses a clean room with analysis rules, thresholds, differential privacy and audit, plus the legal agreements.
+#SHEET Braze
+Q How would you integrate our platform with Braze?
+A I'd start with identity: a stable `external_id` from our user service, with the SDK calling `changeUser` on login so anonymous activity merges, and SDK authentication enabled. Next, an agreed event taxonomy covering only events and attributes that drive messaging or reporting. Authoritative events like purchases go server-side to `/users/track`, batched from a queue, with retries and backoff on rate limits; bulk and slow-changing data comes from the warehouse through Cloud Data Ingestion. Currents streams engagement back to the warehouse for attribution. Consent states sync from our source of truth, deletion requests flow through, and we monitor API usage and data points.
+W "Add the SDK and send events."
+S Covers identity, event design, server versus client sources, batching and rate limits, the data loop back to the warehouse, and consent.

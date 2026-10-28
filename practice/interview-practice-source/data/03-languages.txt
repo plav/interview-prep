@@ -1,0 +1,70 @@
+#DOC Languages
+#SHEET Python
+Q How does concurrency work in Python?
+A It depends on the kind of work. For I/O-bound work, like HTTP calls and database queries, `asyncio` runs thousands of tasks on one thread, switching while each one waits. For CPU-bound work, the traditional build's global interpreter lock lets only one thread run Python bytecode at a time, so threads don't speed up computation; you use processes, via `multiprocessing` or a process pool, or libraries like NumPy that release the lock. Python now also has a free-threaded build without the GIL, which is maturing, so true multi-core threads are becoming an option, but many libraries still need checking. Threads remain fine for I/O.
+F What makes Python code idiomatic? || Comprehensions, context managers (`with`), dataclasses, type hints, f-strings, and the standard library before third-party packages.
+F How do you manage dependencies? || A lock file, with a modern tool such as uv, and virtual environments per project.
+F Are type hints enforced? || Not at runtime; checkers such as mypy or Pyright enforce them in CI.
+W "Python can't do concurrency because of the GIL."
+S Separates I/O-bound from CPU-bound work, names the right tool for each, and knows the free-threading status.
+#SHEET Java
+Q What are virtual threads, and when would you use them?
+A Virtual threads are lightweight threads managed by the JVM rather than the operating system, standard since Java 21. You can run hundreds of thousands of them, because a virtual thread that blocks on I/O is parked, freeing its carrier thread for other work. That lets you write simple blocking code, one thread per request, and still scale like async code, without callbacks or reactive chains. They help I/O-bound services, not CPU-bound work. Watch for code that pins the carrier thread, such as long native calls, and don't pool virtual threads: create one per task.
+F What does modern Java look like? || Records for data, sealed interfaces with pattern-matching `switch`, `var`, text blocks and streams.
+F Which version would you use? || The current long-term support release, Java 25, unless a dependency holds you back.
+F Spring Boot or something lighter? || Spring Boot for most business services; Quarkus or Micronaut where start-up time and memory matter.
+W "They're faster threads."
+S Explains cheap blocking for I/O-bound scale, simple thread-per-request code, and the limits: CPU-bound work, pinning and pooling.
+#SHEET C#
+Q How does async/await work in C#, and what goes wrong?
+A An `async` method returns a `Task`, and `await` pauses the method without blocking the thread: the thread goes back to the pool to serve other requests, and the method resumes when the I/O completes. That's how ASP.NET Core handles many concurrent requests with few threads. The common mistakes are blocking on async code with `.Result` or `.Wait()`, which can starve the thread pool or deadlock; `async void` outside event handlers, which loses exceptions; not passing `CancellationToken` through; and firing tasks without awaiting them. The rule is async all the way down, with cancellation passed through.
+F What are the DI lifetimes? || Singleton, scoped and transient; a scoped DbContext must never be captured by a singleton.
+F `Task` or `ValueTask`? || `Task` by default; `ValueTask` for hot paths that usually complete synchronously.
+F Which version? || .NET 10, the long-term support release; .NET 8 and 9 reach end of support on 10 November 2026.
+W "Async makes code run in the background."
+S Explains non-blocking awaits and thread reuse, and names the classic mistakes and how to avoid them.
+#SHEET JavaScript
+Q Explain the JavaScript event loop.
+A JavaScript runs your code on a single thread, with a call stack. Slow operations, like timers, network requests and file I/O, are handed to the browser or Node.js, and their callbacks are queued when they finish. The event loop runs whatever is on the stack to completion, then drains the microtask queue, which holds promise continuations, and only then takes the next task, such as a timer callback or an I/O event. That's why `await` continuations run before a `setTimeout(0)` callback, and why one long synchronous loop freezes a page or blocks every request in a Node server. Heavy CPU work belongs in a worker.
+F What does `await` actually do? || It pauses the async function and schedules the rest as a microtask when the promise settles, without blocking the thread.
+F `Promise.all` or `Promise.allSettled`? || `all` fails fast on the first rejection; `allSettled` waits for every result.
+F What are the classic gotchas? || `this` binding, `==` coercion, floating-point maths, and mutating shared objects.
+W "JavaScript is asynchronous."
+S Explains the single thread, task and microtask queues, ordering, and what blocks the loop.
+#SHEET TypeScript
+Q How do you get real safety from TypeScript?
+A Turn on `strict`, plus options like `noUncheckedIndexedAccess`, and treat `any` as a bug. Types are erased at runtime, so data from outside, like request bodies, API responses and environment variables, arrives as `unknown` and is validated with a schema library such as Zod, which also gives you the static type. Inside the code, I model states with discriminated unions, so the compiler forces every case to be handled, and use branded types to stop mixing up IDs, like passing a customer ID where an order ID belongs. That combination catches most mistakes before tests even run.
+F `any` or `unknown`? || `unknown` forces you to narrow before use; `any` switches checking off.
+F Interface or type alias? || Mostly interchangeable; interfaces can be merged and extended, type aliases handle unions and mapped types.
+F What's TypeScript 7? || The native compiler rewritten in Go, with much faster builds; some tools stay on 6.x until its programmatic API is stable.
+W "It adds types to JavaScript."
+S Explains strict settings, validating untrusted input at runtime, unions and branded types, and the erasure caveat.
+#SHEET HTML and CSS
+Q How do you build a page that's accessible and fast?
+A Start with semantic HTML: real buttons, links, headings in order, labelled form fields and landmarks, so keyboards and screen readers work without extra effort; add ARIA only where native elements can't express something. Check colour contrast, visible focus and keyboard navigation against WCAG 2.2 AA. For speed, I watch the Core Web Vitals: largest contentful paint, interaction to next paint and cumulative layout shift. That means sizing images and loading them lazily below the fold, prioritising the hero image, keeping JavaScript small, and reserving space so content doesn't jump. Modern CSS like grid, container queries and native dialogs replaces a lot of JavaScript.
+F What are the Core Web Vitals thresholds? || Good is LCP within 2.5 seconds, INP within 200 milliseconds and CLS below 0.1, measured at the 75th percentile.
+F When do you use ARIA? || When no native element fits; the first rule of ARIA is not to use it if HTML can do the job.
+F Flexbox or grid? || Flexbox for one-dimensional rows or columns; grid for two-dimensional layouts.
+W "Add alt text and minify the CSS."
+S Starts from semantic HTML and WCAG 2.2, measures Core Web Vitals, and names concrete techniques for each.
+#SHEET Go
+Q How does concurrency work in Go?
+A Goroutines are lightweight threads managed by the Go runtime, which multiplexes them onto OS threads, so you can run thousands cheaply. They communicate through channels, which pass data and synchronise, and `select` waits on several channels at once, including a context's done channel for cancellation and timeouts. For shared state, a mutex is often simpler. The discipline is making sure every goroutine can finish: pass `context.Context` everywhere, bound concurrency with a semaphore or worker pool, and use errgroup or a WaitGroup to wait. Then run tests with the race detector.
+W "Use `go func()` for parallelism."
+S Covers cancellation with context, bounding concurrency, waiting and error collection, leaks, and the race detector.
+#SHEET Rust
+Q How does Rust guarantee memory safety without a garbage collector?
+A Through ownership, checked at compile time. Every value has exactly one owner, and it's freed automatically when the owner goes out of scope, so there are no leaks from forgetting to free and no double frees. Code can borrow a value, but the borrow checker enforces that you have either many read-only references or one mutable reference at a time, and that no reference outlives the data it points to. That rules out use-after-free, dangling pointers and data races before the program runs. There's no null either: absence is an `Option`, and errors are `Result`s. `unsafe` exists for low-level code, but it's small, explicit and auditable.
+F What's the trade-off? || A steeper learning curve and slower compiles, in exchange for C-like performance with whole classes of bugs removed.
+F How does Rust do concurrency safely? || The `Send` and `Sync` traits mean the compiler rejects sharing non-thread-safe data; shared state goes through `Arc<Mutex<T>>` or channels.
+F When would you choose Rust over Go? || When you need predictable latency without garbage-collection pauses, low-level control, or embedded and WebAssembly targets; Go is quicker to learn and build services with.
+W "Rust is safe because it's strict."
+S Explains ownership, borrowing rules and lifetimes, what bug classes they remove, `Option`/`Result`, and where `unsafe` fits.
+#SHEET C
+Q What is undefined behaviour in C, and how do you avoid it?
+A Undefined behaviour is anything the C standard places no requirements on: out-of-bounds access, use after free, double free, reading uninitialised memory, signed integer overflow, null dereferences and data races. The program might appear to work, crash later, or be optimised in ways that remove your safety checks, and these bugs are behind most memory-safety vulnerabilities. I avoid it by passing buffer sizes everywhere, using bounded functions, checking every allocation and return value, using checked arithmetic for sizes, and keeping ownership simple. Then I let tools catch the rest: warnings as errors, AddressSanitizer and UBSan in tests, static analysis, and fuzzing for anything parsing untrusted input.
+F Stack or heap? || The stack holds locals and is freed on return; the heap is managed manually with `malloc` and `free`.
+F What's new in C23? || `nullptr`, `bool` as a keyword, `constexpr` objects, `typeof`, `#embed`, and checked integer arithmetic.
+F Why do people move to Rust? || Rust enforces the ownership discipline C leaves to the programmer, at compile time, with similar performance.
+W "It's when the program crashes."
+S Defines UB precisely, lists the common causes, explains why it's dangerous, and pairs safe habits with sanitisers, analysis and fuzzing.

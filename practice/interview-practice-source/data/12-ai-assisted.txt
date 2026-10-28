@@ -1,0 +1,97 @@
+#DOC AI-Assisted Engineering
+#SHEET AI coding tools
+Q How do you use AI in your engineering work?
+A Mostly through a coding agent, Claude Code, inside our approved setup. I use it for three kinds of work: investigating, like tracing a failure across services or drafting the AWS and kubectl commands to check something; making well-scoped changes, where I ask for a plan first and keep the diff small; and the surrounding work, like drafting tests, ticket write-ups and test steps. The project has a CLAUDE.md with our build and test commands and conventions, so it starts with the right context. I never paste customer data or credentials, I check commands point at the right account before running them, and I review everything it writes like a colleague's pull request, with the tests as the real judge.
+F Where does it go wrong? || Confidently using APIs or config options that don't exist, over-broad changes, and declaring success without running the tests.
+F Does it make you faster? || On well-scoped, well-tested work, yes; on unfamiliar or subtle problems the review time eats the gain. Studies like METR's show people overestimate the speed-up, so I judge it by outcomes.
+F Which tool is best? || It depends on the team: depth in the terminal, editor-first flow, or GitHub-native automation. The practices transfer between them.
+W "I use ChatGPT to write code faster."
+S Names concrete uses, how context is set up, how output is verified, and the data rules followed.
+#SHEET Prompting coding agents
+Q How do you get good results from an AI coding agent?
+A I brief it like a new colleague: the goal and why, where to start in the code, the constraints, and exactly how we'll know it's done, usually a test command plus new tests for the edge cases. For anything non-trivial I ask for a plan first and correct that before it writes code, because fixing a plan is much cheaper than fixing a diff. I keep one task per session, put standing knowledge like build commands and conventions in the project's instructions file rather than repeating it in chat, and if I've corrected the same thing twice I start a fresh session with a better prompt. Then I review the change in small steps, like any pull request.
+F What's the most common mistake? || No success criteria, so the agent declares victory without running the tests.
+F How do you stop it making huge changes? || Ask for a plan, keep scope explicit, and have it work in small reviewable steps.
+F What's context engineering? || Deciding what goes into the model's context: instructions files, the right files, tool results, and nothing that distracts it.
+W "I just tell it what I want and keep asking until it works."
+S Gives goal, context, constraints and checks; plans first; manages context deliberately; reviews in small steps.
+#SHEET CLAUDE.md and AGENTS.md
+Q How do you give an AI coding agent the context of your codebase?
+A Mainly through the project's instructions file, CLAUDE.md for Claude Code or AGENTS.md for most other tools, which loads at the start of every session. Ours has the build, test and lint commands, conventions that differ from defaults, known traps, and safety rules, like never printing secrets in a PCI environment, and it stays under a couple of hundred lines. Detail for one area goes in path-scoped rules that load only when those files are touched, and longer procedures become skills. It's in Git, so changes are reviewed like code. And because it's guidance rather than enforcement, anything that must never happen is also blocked with permissions or hooks.
+F What do you leave out? || Anything the agent can read from the code, long procedures, personal preferences and, always, secrets.
+F How do you share it across tools? || Keep `AGENTS.md` as the single source, and have `CLAUDE.md` import it.
+F How do you know it's working? || Check `/context` to see it loaded, and add a line whenever the agent repeats a mistake.
+W "I paste the README into the chat."
+S Uses a short, versioned instructions file plus path-scoped rules and skills, shares it across tools, and backs critical rules with enforcement.
+#SHEET Skills
+Q What are agent skills, and when would you write one?
+A A skill is a folder with a SKILL.md file: a description of when to use it, instructions, and optional reference files or scripts. Only the description sits in the agent's context; the full instructions load when I type the command or the agent sees a matching task, so they're cheap to have around. I write one when I keep pasting the same procedure, for example our release-note format or how we investigate a failed batch job. I keep the description specific so it triggers correctly, inject live data like the git log, pre-approve only the read-only tools it needs, and stop the agent running anything with side effects on its own. Skills follow an open standard, so they work across several tools, and I test and review them like code, especially third-party ones.
+F Skill or CLAUDE.md? || CLAUDE.md for facts needed every session; skills for procedures and knowledge needed sometimes.
+F Skill or hook? || A skill guides; a hook enforces. Anything that must happen every time is a hook.
+F How do you share them? || Commit project skills to the repo, or package them in a plugin.
+W "They're like saved prompts."
+S Explains progressive disclosure, when to write one, description design, tool scoping, side-effect control, testing and supply-chain risk.
+#SHEET Hooks
+Q What are hooks in Claude Code, and how have you used them?
+A Hooks are commands the agent runs automatically at points in its lifecycle, such as before a tool call, after an edit, or when it tries to stop. Unlike instructions in CLAUDE.md, they always run, so they're how you make rules deterministic. I use a PreToolUse hook that denies risky shell commands, like force pushes, printing the environment, or anything against a production cluster, with a reason the agent can read so it adjusts. Another blocks edits to secrets, lockfiles and CI workflows, and a PostToolUse hook formats every edited file. I test hooks against sample inputs like any code, use exit code 2 or a JSON deny to block, and treat them as a safety net: hard limits still live in permission deny rules and the sandbox.
+F Hook or CLAUDE.md? || CLAUDE.md is advice the model may ignore; a hook runs every time.
+F Why not rely on hooks for security? || Text matching can be bypassed; permission rules and sandboxing are enforced by the tool itself.
+F What else are they good for? || Notifications, audit logs, injecting environment context at session start, and running tests before the agent stops.
+W "They're scripts that run sometimes."
+S Explains lifecycle events, matchers, exit codes and JSON decisions, gives tested examples, and positions hooks alongside permissions and sandboxing.
+#SHEET Subagents and commands
+Q When would you use a subagent?
+A When a side task would flood the main context or benefits from a specialist. A subagent has its own context window, instructions and tool set, does the job and returns a summary. I use the built-in read-only explorer for broad codebase searches, and a custom security reviewer, read-only, with a checklist for secrets, authorisation, injection and error leakage, after changes to sensitive code. I don't delegate the main change or anything that depends on earlier discussion, because the subagent starts without that history. I keep tools minimal, ask for file paths and evidence in the result, and use a cheaper model where the task is simple.
+F Subagent or skill? || A skill adds instructions to the current context; a subagent works in a separate one. A skill can also run in a subagent with `context: fork`.
+F How do you run work in parallel safely? || Independent, read-only investigations, or separate git worktrees for changes.
+F What are custom commands? || Skills you invoke by name, like `/fix-issue PROJ-123`, with side-effect commands restricted to manual use.
+W "Subagents make it faster because they work in parallel."
+S Explains context isolation and specialisation, when not to delegate, tool restriction, result quality and cost.
+#SHEET MCP in coding tools
+Q How do you connect a coding agent to your team's tools?
+A Through MCP servers. In Claude Code, I add hosted servers like Atlassian with `claude mcp add`, and the ones the whole team needs go in the repository's `.mcp.json`, with credentials read from environment variables so nothing secret is committed. Then the agent can read the Jira ticket and acceptance criteria itself, check CI, or pull Datadog logs during an investigation. I keep access least-privilege: read-only tokens, test and staging targets rather than production, and write actions like commenting or opening a PR set to ask for approval. I vet and pin servers like any dependency, and I treat what they return as untrusted, because a ticket or web page can carry prompt injection.
+F Project or user scope? || Project for what the whole team needs; user or local for personal tools.
+F How do you stop a server doing damage? || Scoped credentials, permission rules that ask before write tools, and no production write access.
+F Do MCP servers work across tools? || Yes: the same server works in Claude Code, Cursor, VS Code with Copilot and Codex; only the config file differs.
+W "I gave it my GitHub token so it can do everything."
+S Uses scoped, read-only credentials, project config without secrets, approvals for writes, vetted and pinned servers, and treats results as untrusted.
+#SHEET Plugins, settings and permissions
+Q How do you keep an AI coding agent safe on your machine and in your repo?
+A With permissions and isolation, not just instructions. The project's settings file, committed and reviewed like code, allows routine commands like tests, lint and git diff without prompts, asks before commits, pushes or anything that writes to Jira, and denies reading .env files and secrets, terraform apply and destructive deletes. Deny always wins, and organisation-wide limits go in managed settings so nobody can weaken them. For longer autonomous runs I turn on the sandbox, which restricts file writes and network access at the operating-system level, so even a prompt injection can't reach further. Bypass mode only ever runs in a disposable container. And our shared skills, hooks and MCP config ship as a versioned team plugin, vetted like any dependency.
+F Why isn't CLAUDE.md enough? || It's guidance the model can ignore; permissions are enforced by the tool.
+F What's the order of evaluation? || Deny, then ask, then allow; the first match wins.
+F How would you run an agent in CI? || `dontAsk` or a tight allow list, a sandbox or container, scoped short-lived credentials, and output reviewed as a pull request.
+W "I just approve what it asks."
+S Uses layered settings with deny, ask and allow rules, the right permission mode, sandboxing, managed limits and vetted plugins.
+#SHEET Agent workflows
+Q Walk me through how you'd use an agent to deliver a ticket.
+A First I have it read the ticket and the relevant code in plan mode and explain the current behaviour, so I know it understands before it changes anything. Then it proposes a plan, files, approach, risks and tests, and I correct that. If it's a bug, it writes a failing test that reproduces it; for a feature, tests for the acceptance criteria and edge cases. I commit those, then it implements in small steps, running the tests each time, with an instruction not to touch the tests. I run the full suite and lint, check the behaviour myself, and review the whole diff like a colleague's PR before it goes up. For independent tasks I'll run agents in separate git worktrees, and our CI has an agent reviewer on PRs, but a person always approves the merge.
+F When do you not use an agent? || Unfamiliar, high-risk code where I need to build my own understanding, or changes so small that explaining them takes longer.
+F How do you stop scope creep? || An approved plan, explicit out-of-scope items, and logging other improvements as follow-up tickets instead of doing them.
+F What about agents in CI? || Useful for review comments and small fixes, with limited triggers, scoped tokens and human approval.
+W "I give it the ticket and it does the rest."
+S Describes explore, plan, test first, small verified steps and a full review, plus worktrees and CI with human approval.
+#SHEET Reviewing AI-generated code
+Q How do you review AI-generated code?
+A Like a colleague's PR, plus checks for the ways AI code typically fails. First, is the diff what we agreed, and small enough to review properly? Then I check that every package and API it uses actually exists, because models invent plausible names; a 2025 study found about one in five recommended packages didn't exist, and attackers register those names. I look hard at authorisation, input handling, secrets and error messages, since studies like Veracode's found security flaws in nearly half of AI coding tasks. I check failure paths, and whether the tests would actually fail if the code were wrong, and I reject edits to tests that just make them pass. I'll use an AI reviewer as a first pass, but a person approves, and I only merge what I can explain.
+F What's slopsquatting? || Registering malicious packages under names that models hallucinate, so anyone who installs the suggestion gets malware.
+F Can AI review AI code? || As a first pass, yes, ideally a fresh session or a different model with a checklist; it doesn't replace human approval.
+F Who's accountable? || The engineer who merges it, same as any code.
+W "If the tests pass, it's fine."
+S Checks scope, existence of packages and APIs, security, failure paths and test quality; uses AI review as an aid; owns what's merged.
+#SHEET Security and data with AI tools
+Q What are the security risks of AI coding tools, and how do you manage them?
+A Two kinds. Data risk: anything in a prompt or that the agent reads goes to the provider, so I use only our approved tools, never paste customer data, card data or credentials, and redact logs; deny rules also stop the agent reading secret files. Access risk: the agent runs with my permissions and can be steered by prompt injection in tickets, docs or web pages, or abused by malware, as in the 2025 Nx attack that ran AI CLIs with bypass flags to steal secrets. So I give it short-lived, read-only, non-production credentials, require approval for pushes and other writes, run longer autonomous work in a sandbox, never use bypass mode outside a throwaway container, and vet skills, plugins and MCP servers like dependencies. In our PCI environment, agents stay out of the cardholder data environment entirely.
+F What's prompt injection? || Instructions hidden in content the model reads, which it may follow as if they came from you.
+F How do you stop data leaving? || Approved tools with no-training terms, deny rules and redaction, and a sandbox that limits network destinations.
+F What would you put in a team policy? || Approved tools, data classes that never go in prompts, required permission and sandbox settings, vetting for extensions, and human review for all agent changes.
+W "We tell people not to paste secrets."
+S Separates data and access risk, cites real incidents, and layers approved tools, deny rules, least privilege, sandboxing, vetting and human approval.
+#SHEET Measuring impact and team adoption
+Q Does AI actually make engineers more productive?
+A The honest answer is that it depends, and it's still being measured. METR's 2025 trial found experienced developers were 19% slower with early-2025 tools while believing they were 20% faster, so self-reports aren't reliable. Their follow-up with newer agentic tools pointed to a speed-up, but they say selection effects make it unreliable, because many developers wouldn't work without AI. DORA's 2025 research found AI linked to higher throughput but worse stability: it amplifies what a team already does well or badly. So I'd judge it by team outcomes, lead time, change failure rate, review load and defects, and invest in the foundations: good tests, small changes, clear review, and safe settings. In my own work it clearly helps with investigation, tests and write-ups; on subtle production code, the review is where the time goes.
+F How would you introduce it to a team? || Policy and approved tools first, a shared setup in the repo, a pilot with real metrics, and training on workflow and review.
+F What metrics would you watch? || DORA metrics plus PR size, review time, defects and cost; never lines of AI code.
+F What about juniors? || Use it to learn, not to skip learning: explain every change, and write some code without it.
+W "It makes us 10 times faster."
+S Cites the evidence and its limits, separates perception from measurement, names outcome metrics, and describes a careful rollout.

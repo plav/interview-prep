@@ -1,0 +1,58 @@
+#DOC APIs and Architecture
+#SHEET APIs
+Q Design an API for placing and listing orders.
+A `POST /orders` creates an order and returns 201 with a `Location` header. It requires an `Idempotency-Key`, so a retry after a timeout can't create two orders. `GET /orders/{id}` reads one, and checks the order belongs to the caller. `GET /orders?status=placed&limit=20&cursor=…` lists them with cursor pagination, which stays fast and consistent as new orders arrive. Cancelling is `POST /orders/{id}/cancellation`, returning 409 if it's already shipped. Errors use RFC 9457 problem details with a trace ID; updates use ETags to prevent lost updates; everything is described in OpenAPI, versioned in the URL, rate-limited, and authenticated with OAuth access tokens.
+F PUT or PATCH? || `PUT` replaces the whole resource and is idempotent; `PATCH` changes some fields.
+F Offset or cursor pagination? || Cursors for large or changing data, offset when users need page numbers on small sets.
+F How do you evolve the API without breaking clients? || Additive changes only, a new version for breaking ones, deprecation headers, and usage tracking before removal.
+W Lists endpoints.
+S Covers status codes, errors, idempotency, pagination, authorisation, concurrency and evolution.
+#SHEET Microservices
+Q Should we move our monolith to microservices?
+A Only if it solves a problem we actually have. Microservices help when several teams block each other's releases, when parts have very different scaling or reliability needs, or when we need independent deployment. They cost us network failures, eventual consistency and a lot more to operate. I'd first make the monolith modular, with enforced boundaries along business capabilities and separate data access per module. Then I'd extract the module with the clearest boundary and the strongest reason to be separate, using the strangler-fig pattern behind a routing layer, with its own data, communicating through events where possible. Before splitting, we need CI/CD, tracing and contract tests in place.
+F How do you handle a transaction across services? || A saga, with compensating steps, plus the outbox pattern and idempotent consumers. Not distributed transactions.
+F How do you stop one failing service taking others down? || Timeouts, retries with backoff, circuit breakers, bulkheads, and asynchronous messaging where an immediate answer isn't needed.
+W "Yes, microservices scale better."
+S Starts from the problem, weighs the costs, proposes a modular monolith and an incremental strangler extraction, and names the platform prerequisites.
+#SHEET GraphQL
+Q When would you choose GraphQL over REST?
+A When many clients need different shapes of data from many back-end sources. A mobile app and a web app can each fetch exactly what a screen needs in one round trip, and front-end teams can move without new endpoints. For simple CRUD, public APIs where HTTP caching matters, or service-to-service calls, REST or gRPC is usually simpler. If I use GraphQL, I design the schema around client needs, batch with DataLoader to avoid N+1, enforce depth, cost and pagination limits, authorise per object in the resolvers, and use persisted queries for first-party clients. With several teams, federation lets each own a subgraph.
+W "GraphQL is better because there's no over-fetching."
+S Names when it fits and when it doesn't, and covers the operational costs: N+1, caching, query cost and authorisation.
+#SHEET Event-driven architecture
+Q Choreography or orchestration for an order flow?
+A It depends on how complex the flow is. For simple fan-out, like 'order placed' triggering an email, analytics and a loyalty update, choreography is ideal: each consumer subscribes independently, and the order service doesn't know about them. For a business process with ordered steps and compensation, like reserve stock, charge, then confirm or release, I'd use orchestration, with Step Functions or Temporal, so the flow, timeouts and retries are explicit and visible. Either way, events are past-tense facts in a versioned envelope, published through an outbox, and consumers are idempotent and tolerate reordering.
+W "Use events for everything."
+S Distinguishes events from commands, chooses choreography or orchestration by flow complexity, and covers reliability: outbox, idempotency, versioning.
+#SHEET Messaging and streaming
+Q Queue, pub/sub or stream: how do you choose, and how do you make consumers reliable?
+A It depends on who needs each message. A queue when one worker should process it, like background jobs. Pub/sub when several independent consumers each need a copy of an event. A stream like Kafka when I need high volume, ordering per key, or the ability to replay history and add new readers later. Whichever I pick, delivery is at least once, so consumers are idempotent: they record processed event IDs, or use the event ID as an idempotency key downstream. Failures retry with backoff, then go to a dead-letter queue with an alert, and I monitor lag, not just errors.
+F How does Kafka guarantee ordering? || Only within a partition. Records with the same key go to the same partition, so ordering is per key, and one consumer in a group reads each partition.
+F Is exactly-once delivery possible? || Inside Kafka, yes, with idempotent producers and transactions. End to end, with external side effects, you achieve exactly-once effect through at-least-once delivery plus idempotent processing.
+F How do you publish an event reliably when you save to the database? || The transactional outbox: write the event to an outbox table in the same transaction, then a relay or change data capture publishes it. That avoids the dual-write problem.
+F What's new in Kafka? || 4.0 removed ZooKeeper in favour of KRaft. Since 4.2, share groups give queue-style consumption with per-record acknowledgement, without the one-consumer-per-partition limit.
+W "Kafka is better because it's faster."
+S Chooses by consumption pattern (one consumer, many, or replayable stream) and names the operational cost of Kafka.
+W Assumes each message is processed once, in order.
+S Designs for duplicates and reordering: idempotency keys, per-entity ordering, DLQs, lag alerts, the outbox.
+#SHEET Caching and Redis
+Q How would you add caching to a slow service?
+A First I'd measure, to check that reads really dominate and that the slowness isn't just a missing index. Then I'd pick the closest sensible layer: HTTP caching at the CDN for public responses, and Redis or Valkey for shared data, using cache-aside. Read the cache, on a miss load from the database and store the result with a TTL; on a write, update the database and delete the key. The TTL is set per data type, by how stale each kind of data can be. For hot keys I'd prevent stampedes with single-flight loading and TTL jitter. And the service must still work if the cache is down, just more slowly, so cache calls have timeouts and errors fall back to the database.
+F Why delete the key on write rather than update it? || Concurrent updates can interleave so that the older value is written to the cache last and stays there. Deleting means the next read loads the current value.
+F What's a cache stampede, and how do you prevent it? || Many requests miss the same expired key at once and overload the database. Prevent it with single-flight or a short lock, jittered TTLs, serving stale data while refreshing, or refreshing early.
+F Redis or Valkey? || Functionally similar for caching, and wire-compatible for core commands. Valkey is BSD-licensed and backed by the Linux Foundation, and it's AWS's recommendation on ElastiCache. Redis 8 is AGPL or source-available, and bundles more modules.
+F How do you cache data that's different per user? || Include the user or tenant ID in the key, keep TTLs short, never cache it at a shared CDN, and consider whether caching it is worth it at all.
+W "Put Redis in front of the database."
+S Starts from measurement and acceptable staleness, chooses the layer, and explains the read and write paths, including invalidation.
+W Ignores failure.
+S Covers stampedes, the cache going down, hot keys, and personalised data leaking between users.
+#SHEET System design
+Q How would you open a system design question?
+A Before drawing anything, I'd like to pin down requirements: the core use cases and what's out of scope, then scale, latency, availability and consistency needs. Then I'll do rough estimates for traffic and storage, sketch the API, and walk a request through a high-level design. After that I'll go deeper on the data model and the hardest parts, probably the hot path and consistency, and finish with failure handling, monitoring and what changes at ten times the scale. I'll state my assumptions as I go; please steer me if you'd like me to focus somewhere specific.
+W Starts drawing a load balancer and microservices.
+S Clarifies requirements, quantifies, designs to the numbers, and explains trade-offs and failure modes.
+#SHEET Written design proposals
+Q How do you drive a technical decision across teams?
+A I start by agreeing the problem with the people affected, with evidence, before proposing anything. Then I write a short design doc: context, goals and non-goals, the proposal, two or three real alternatives, and honest trade-offs and risks, plus rollout and operations. I share it with key reviewers early, ask for specific feedback by a date, and resolve every comment visibly. The final decision goes into an ADR in the repository, so the reasoning survives after the meeting. If we disagree, I make sure the trade-off is understood, and then I'm happy to disagree and commit.
+W "I'd present my idea in a meeting."
+S Uses a structured, problem-first written proposal, early socialising, real alternatives, and ADRs for the record.

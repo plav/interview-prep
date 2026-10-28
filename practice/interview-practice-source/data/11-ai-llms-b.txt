@@ -1,0 +1,51 @@
+#DOC AI and LLMs
+#SHEET Streaming
+Q Why stream LLM responses, and what can go wrong?
+A Because perceived latency is time to first token: streaming shows text in under a second instead of waiting many seconds for the full answer. The backend calls the model with the SDK's streaming API and relays events to the browser over SSE, buffering properly because network chunks don't align with events. I abort the upstream request when the user stops or disconnects, collect the final message for logging and evaluation, and only act on complete, validated output. The usual production problems are proxies that buffer, idle timeouts, and errors mid-stream, which need a clear retry path in the UI.
+W "It makes it feel faster."
+S Explains time to first token, SSE relaying, cancellation, full-response logging, safe rendering, and infrastructure pitfalls.
+#SHEET Tool calling
+Q How does tool calling work, and how do you make it safe?
+A You describe tools with names, clear descriptions and JSON input schemas. The model doesn't run anything; it returns a structured request, my code executes the tool and sends back the result, and the loop continues until the model answers, with a step limit. Safety lives in the tools: identity comes from the session, not model input, so a customer can only see their own orders; inputs are validated; credentials are narrowly scoped; and consequential actions need confirmation and idempotency keys. Errors go back to the model as tool results so it can recover, every call is logged, and tool outputs are treated as untrusted because they can carry prompt injection.
+W "The model calls our APIs."
+S Explains the loop, puts authorisation and validation in the tools, scopes permissions, confirms writes, and handles errors and limits.
+#SHEET MCP
+Q What is MCP, and why does it matter?
+A MCP is an open protocol, now governed by the Agentic AI Foundation under the Linux Foundation, that standardises how AI applications connect to tools and data. A host application runs MCP clients, each connected to a server that exposes tools the model can call, resources the app can load, and prompt templates, over JSON-RPC via stdio locally or Streamable HTTP remotely. It turns every app-to-service pair into one integration per service. The latest revision, 2026-07-28, made it stateless, so remote servers scale like ordinary HTTP services. Security is the main design concern: OAuth with properly scoped tokens, least-privilege tools, user approval for writes, and treating tool text as untrusted, because of tool poisoning and prompt injection.
+W "It's a plugin system for Claude."
+S Explains the vendor-neutral protocol, the host, client and server roles, the primitives and transports, the current revision, and the security model.
+#SHEET Agents
+Q When would you build an agent, and how would you keep it safe?
+A Only when the steps can't be fixed in advance. If they can, a workflow, like routing or prompt chaining, is cheaper, faster and easier to test. When an agent is justified, say for investigating alerts or making multi-file code changes, I give it a clear goal with checkable success criteria, a small set of well-described tools, and budgets on steps, tokens and cost. Verification is part of the loop: tests, citations or a reviewer. Irreversible actions need human approval, credentials are least-privilege and sandboxed, and anything it reads is treated as untrusted because of prompt injection. Every step is traced, and changes are evaluated against a task suite first.
+W "Agents can automate anything."
+S Prefers workflows by default, justifies autonomy, and builds in budgets, verification, approvals, least privilege, tracing and evals.
+#SHEET Agent frameworks
+Q Which agent framework would you use?
+A It depends on the problem and the team. For a simple tool loop, I'd use the provider SDK directly, because it's a small amount of code and I can see every prompt. If we need durable, long-running runs with human approval, or complex branching, I'd pick a framework built for that, like LangGraph in Python or Mastra in TypeScript, or the Claude Agent SDK if the agent works on code and files with Claude. I'd keep tools behind MCP and traces in OpenTelemetry, so we're not locked in, and I'd pin versions, because these frameworks change quickly.
+W "LangChain, because everyone uses it."
+S Starts without a framework, picks one for durability, state or orchestration needs, matches the team's stack, and avoids lock-in.
+#SHEET LLM evaluation
+Q How do you test an LLM feature?
+A With an eval suite, treated like any other test suite. I start with a few dozen real examples, covering common cases, edge cases, adversarial inputs and cases where the right answer is 'I don't know', each with specific criteria. I grade with code wherever possible, like categories, schemas, required facts and citations, and use an LLM judge with a rubric for qualities like groundedness, after checking it agrees with human labels. The suite runs in CI on every prompt, retrieval or model change, with thresholds, and I run cases several times because outputs vary. In production, we sample traffic for review and turn every failure into a new test case.
+W "I try some prompts and check the answers look right."
+S Builds a representative, versioned test set, grades with code first and calibrated judges second, gates changes in CI, and feeds production failures back.
+#SHEET LLM observability
+Q How would you monitor an LLM feature in production?
+A Beyond the usual errors and latency, I'd log per request the model and prompt version, token counts including cache hits, cost, time to first token, stop reason, tool calls and retrieval IDs, and store text only where policy allows, with redaction. Dashboards per feature show volume, cost, latency, errors and quality side by side, with deploy markers. For quality, I'd combine user feedback, outcome metrics like escalation rate, and online evals on sampled traffic, with a human review queue that feeds failures back into the test set. Alerts cover error and latency SLOs, cost budgets, cache-hit drops, and spikes in truncated or invalid outputs.
+W "We log the requests."
+S Tracks tokens, cost, latency and versions per request, monitors quality with feedback, outcomes and online evals, and respects privacy.
+#SHEET LLM tracing
+Q How would you debug a bad answer from an agent?
+A From its trace. Every run produces an OpenTelemetry trace with a span per model call, tool call and retrieval step, using the GenAI conventions: model and prompt version, tokens, latency, stop reasons, tool arguments and results, and retrieved document IDs, linked to the HTTP request and database spans underneath. I'd open the trace, see where it went wrong, whether retrieval missed the right document, a tool returned an error, or the model ignored a result, then replay that case in the eval harness, fix it, and add it to the test set. Prompt and response text is captured only where policy allows, with redaction.
+W "Check the logs."
+S Uses linked, versioned traces with GenAI spans to pinpoint the failing step, then reproduces and tests the fix.
+#SHEET LLM security
+Q How do you defend against prompt injection?
+A I assume it will sometimes succeed, so I limit what a manipulated model can do. Tools are least-privilege and read-only by default; authorisation happens in code using the session's identity, never model output; and anything consequential needs explicit user confirmation. Untrusted content, like documents, emails and tool results, is clearly labelled as data, and I avoid combining private data, untrusted content and an exfiltration path in one agent. On top of that, I add input and output classifiers, validate and encode all output, rate-limit and budget usage, trace every step, and keep injection cases in the eval suite, rerun on every change.
+W "We tell the model to ignore malicious instructions."
+S Designs for compromise: least privilege, authorisation in code, confirmations, no exfiltration paths, layered detection, and red-team evals.
+#SHEET Managing costs and latency
+Q Our LLM feature is too slow and too expensive. What would you do?
+A First, measure per request: tokens in, out and cached, cost, time to first token and total latency, broken down by feature and step, so I know where it goes. Then the usual levers, checking each against our eval suite: route simple requests to a smaller model and keep the large one for hard cases; move stable instructions and documents to the front of the prompt and cache them; retrieve fewer, re-ranked chunks and trim history and tool results; cap output length and reasoning budgets; push non-urgent work to the batch API at around half price; and stream responses so users see text quickly. Finally, per-tenant budgets and agent step limits stop runaway costs.
+W "Switch to a cheaper model."
+S Measures first, applies model routing, caching, context trimming, output limits, batching and streaming, and validates each change with evals.

@@ -1,0 +1,83 @@
+#DOC Interviews and Career
+#SHEET Interview skills
+Q Tell me about yourself.
+A I'm a software engineer with [X] years building [backend services / payment systems / …], mostly in TypeScript and Node on AWS. Most recently at [company] I [one concrete achievement with a number, such as cutting checkout latency by 40% or leading the move to event-driven order processing]. I enjoy [the kind of work this role involves, such as making systems reliable and fast]. Outside work I've been building an order service end to end, with Terraform, CI/CD, observability and an LLM feature, to deepen my cloud and production skills. I'm looking for [what this role offers], which is why this position stood out. (A structure to fill in with your own details: present, then past, then future, in about a minute, ending on why this job.)
+F Why are you leaving? || Be positive and forward-looking: growth, scope, a technology or domain you want. Don't complain.
+F What's your biggest weakness? || A real, non-fatal one, plus what you're actively doing about it.
+F Where do you see yourself in a few years? || Growing in a direction this role supports, such as deeper technical ownership or leading designs.
+W Recites their CV from university onwards.
+S A one-minute arc (now, highlights, next) tied to this role, with one concrete number.
+W "We did…"
+S "I did…", with a clear role and a measurable result.
+#SHEET Data structures
+Q Design an LRU cache with O(1) get and put.
+A I need fast lookup by key and fast updates to recency order. A hash map gives O(1) lookup, and a doubly linked list gives O(1) moves and removals, so the map points to list nodes, the most recent at the head and the least recent at the tail. On get, I move the node to the head. On put, I insert at the head, and if we're over capacity, I remove the tail and its map entry. In JavaScript I can use a Map, because it keeps insertion order: deleting and re-inserting a key moves it to the end, and the first key is the least recently used.
+F Why a doubly linked list? || Removing a node in O(1) needs its previous pointer.
+F Hash map or balanced tree? || A hash map is O(1) on average and unordered; a balanced tree is O(log n) but keeps keys sorted, for range queries.
+F When is a heap better than sorting? || When you only need the top k items, or items arrive continuously: O(n log k) instead of O(n log n).
+W Picks a structure without saying why.
+S Names the operations needed, and picks the structure that makes each one cheap.
+W Gives time complexity only.
+S Gives time and space, notes average vs worst case, and checks edge cases.
+#SHEET Algorithms
+Q How do you recognise a dynamic programming problem, and how do you approach it?
+A The signals are 'count the ways', 'minimum or maximum', or 'is it possible', where choices at each step depend on earlier ones and the brute-force recursion repeats the same subproblems. I first write that brute-force recursion to find the state, say 'fewest coins for amount a', then the transition from smaller states and the base case. Then I either memoise the recursion or fill a table bottom-up, and finally check whether I only need the last row or two, to cut memory. I'd also test a greedy idea against a small counterexample, because that's usually why DP is needed.
+F BFS or DFS? || BFS for shortest paths in unweighted graphs, since it explores level by level. DFS for exploring everything, cycles, components and backtracking.
+F How do you detect a cycle in a directed graph? || Topological sort: if not every node gets processed, there's a cycle. Or DFS with a "currently on the path" marker.
+F What's the complexity of Dijkstra? || O((V + E) log V) with a binary heap.
+W Jumps straight to a memorised solution.
+S Builds from brute force to the optimised version, naming the state and the transition.
+W States the complexity without reasoning.
+S Derives it from the loops, or the number of states times the work per state.
+#SHEET LeetCode patterns
+Q Find the length of the longest substring without repeating characters.
+A Brute force checks every substring for repeats, which is O(n³), or O(n²) with a set. Since it's a contiguous substring with a condition, a sliding window fits. I keep a left and right pointer and a map of each character's last index. As the right pointer moves, if the character was last seen inside the window, I move the left pointer just past it. The window is always valid, so I track the maximum length. Each pointer only moves forward, so it's O(n) time and O(k) space, where k is the alphabet size. Edge cases: an empty string returns 0, and all-identical characters return 1.
+F Why does this work? || The window always contains unique characters, and every valid window ending at each position is considered once.
+F What if it's at most two distinct characters instead? || The same window, with a count map: shrink while the map holds more than two keys.
+F How do you recognise sliding window problems? || Contiguous subarrays or substrings, with "longest", "shortest" or "count" under a condition.
+W Starts coding immediately, in silence.
+S Clarifies, gives brute force and its cost, names the pattern from the signals, then codes.
+W "I think it works."
+S Walks through an example, covers edge cases, and states time and space.
+#SHEET Coding Interview University roadmap
+Q How did you prepare for this interview?
+A I refreshed fundamentals with a structured plan, using parts of Coding Interview University for data structures, graphs and dynamic programming, then focused on the roughly fifteen problem patterns that come up most, solving a few problems for each, out loud and timed. I also did weekly mock interviews, and prepared stories about real projects using the STAR format. Alongside that I built a small capstone service end to end, so I could talk about design trade-offs from experience, not just theory.
+W "I did lots of LeetCode."
+S Describes a deliberate plan: fundamentals, patterns, timed practice, mocks and real project stories.
+#SHEET Capstone project plan
+Q Walk me through a project you built.
+A I built an order service for a small shop, end to end on AWS, to practise production engineering. It's a TypeScript API on ECS Fargate with PostgreSQL, built entirely with Terraform and deployed through GitHub Actions using OIDC. Orders publish events through a transactional outbox to EventBridge and SQS, so emails and other side effects are decoupled and idempotent. Payments use Stripe with idempotency keys and webhooks, and a daily reconciliation job. It's traced with OpenTelemetry into Datadog, with SLO-based alerts. The most interesting problem was duplicate emails during a game day, which led me to add an idempotent consumer, and I wrote up the postmortem. (Use once you've built it.)
+F Why ECS rather than EKS? || Name your ADR's reasoning: less operational overhead for one service, and EKS was a stretch goal to compare.
+F What would you change at ten times the traffic? || Talk about read replicas or caching, partitioning hot paths, queue-based load levelling, and load-test evidence.
+F What went wrong? || Tell a real incident from your game days, with the timeline, the fix and what you changed.
+W Lists technologies used.
+S Explains the problem, key decisions and trade-offs, and one thing that broke and how you fixed it.
+#SHEET Common interview questions
+I Tell me about yourself. || What they're testing: communication, and relevance to the role. Use the one-minute arc from the Interview skills sheet: where you are now, what you've done that matters for this role, and why this role next.
+I Tell me about a project you're proud of. || What they're testing: ownership, impact and technical depth. Use your technical achievement story, or the capstone.
+I Tell me about a time you disagreed with someone. || What they're testing: collaboration, influence and maturity. Use your disagreement story: evidence, listening, and disagree and commit.
+I Tell me about a mistake or failure. || What they're testing: honesty, learning and accountability. Use an incident or failure story, ending with what changed.
+I Describe a time you worked under pressure. || What they're testing: prioritisation and calm. Use an incident story (see the Incident management sheet).
+I How did you handle unclear requirements? || What they're testing: judgement and proactivity. Use an ambiguity story: clarifying questions and small experiments.
+I Tell me about leading without authority. || What they're testing: influence and leadership. Use a story about driving a change, mentoring, or an RFC (see the Written design proposals sheet).
+I Describe a time you improved a process. || What they're testing: initiative and measurable impact. Use an automation or process story (see the Automation sheet).
+I How do you prioritise competing work? || What they're testing: judgement and communication. Weigh impact against effort, and make the trade-offs visible to stakeholders.
+I Tell me about giving or receiving difficult feedback. || What they're testing: self-awareness and empathy. Make it specific, kind and actionable, and say what you changed.
+I Walk me through the architecture of your current system. || Prepare one diagram you can draw in two minutes: clients, services, data stores, messaging, and the biggest trade-off.
+I How would you design X? || Use the System design sheet's method.
+I How do you make a service reliable? || Prepare with the Advanced cloud principles and Incident management sheets.
+I How do you secure an API? || Prepare with the Authentication and authorisation, APIs, and Security overview sheets.
+I A query or endpoint is slow: what do you do? || Prepare with the SQL and Performance and load testing sheets.
+I How do you test your code? || Prepare with the Dev testing and Unit tests sheets.
+I How do you deploy safely? || Prepare with the CI/CD and Kubernetes: deploying sheets.
+I Explain the difference between X and Y (SQL and NoSQL, queue and topic, process and thread). || Use the comparison tables across the sheets.
+I What's a technology you've learned recently, and how? || A real example, with how you applied it.
+I How do you use AI tools in your work? || See AI-assisted development (Ways of Working doc) and the AI-Assisted Engineering doc: productivity, with review and verification.
+I Why are you leaving? || Forward-looking: "I'm looking for more ownership of X and to work with Y". Nothing negative about your employer.
+I What's your biggest weakness? || A real, non-critical one, plus what you're doing about it, with evidence of progress.
+I Why is there a gap in your CV? || Brief and honest (caring, study, health, redundancy), then what you did, and why you're ready now.
+I Why should we hire you? || Three points matching their stated needs, each backed by evidence.
+I What are your salary expectations? || Research a range (levels data, recruiters); give a range based on the role's scope, or ask for their budget first; negotiate the whole package.
+I Where do you see yourself in five years? || Growth aligned with what the role offers.
+I Do you have any questions for us? || Always yes: two or three from the Interview skills sheet.
+I Tell me about a time you failed to deliver. || The situation, your part honestly, the impact, and what you changed afterwards.
